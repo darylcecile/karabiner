@@ -5,6 +5,8 @@
 pub mod agents;
 pub mod config;
 pub mod editor;
+pub mod factory;
+pub mod target;
 
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName,
@@ -96,7 +98,27 @@ impl Inbox {
     fn answer(&mut self, id: &str, response: String, cx: &mut Context<Self>) {
         let Some(item) = self.items.ready().and_then(|items| items.iter().find(|item| item.intervention.id == id)).map(|item| item.intervention.clone()) else { return };
         self.responding = None;
-        self.update(&item, InterventionStatus::Answered, Some(response), cx);
+        match (&item.run_id, &item.question_id) {
+            (Some(run), Some(question)) => self.answer_run(run, question, response, cx),
+            _ => self.update(&item, InterventionStatus::Answered, Some(response), cx),
+        }
+    }
+
+    /// Run questions are answered on the run; the service resolves the linked inbox item.
+    fn answer_run(&mut self, run_id: &str, question_id: &str, answer: String, cx: &mut Context<Self>) {
+        let api = self.state.api.clone();
+        let path = format!("/v1/runs/{}/questions/{}/answer", query_value(run_id), query_value(question_id));
+        let body = protocol::AnswerRunQuestion { answer: Some(answer), ..Default::default() };
+        self._mutations.push(cx.spawn(async move |this, cx| {
+            let result = api.post::<_, protocol::Run>(&path, &body).await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(_) => this.state.data_changed(cx),
+                    Err(error) => this.error = Some(ui::service_message(&error)),
+                }
+                cx.notify();
+            }).ok();
+        }));
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -146,6 +168,9 @@ impl Inbox {
         let open = intervention.status == InterventionStatus::Recorded;
         let amber = ui::needs_you(cx);
         let (dismiss, answer_id) = (intervention.clone(), intervention.id.clone());
+        // A run approval resolves with approve / reject; anything else fails the gate.
+        let approval = intervention.kind == InterventionKind::Approve && intervention.question_id.is_some();
+        let (approve_id, reject_id) = (intervention.id.clone(), intervention.id.clone());
         let responding = self.responding.as_deref() == Some(intervention.id.as_str());
         let response_input = self.response.clone();
         let intervention_message = intervention.message.clone();
@@ -166,12 +191,22 @@ impl Inbox {
                     .child(div().ml_auto().t_caption().text_color(cx.theme().muted_foreground).child(ui::short_date(&intervention.created_at))))
                 .child(div().t_body().text_color(theme_tokens::tokens(cx).text).child(intervention.message.clone()))
                 .child(div().t_caption().text_color(cx.theme().muted_foreground).child(match intervention.status {
-                    InterventionStatus::Recorded => "Recorded. Not delivered: execution isn't available yet.".to_string(),
+                    InterventionStatus::Recorded => match intervention.execution_status.as_str() {
+                        "pending" => "Waiting to be delivered to the run.".to_string(),
+                        "delivered" => "Delivered to the run.".to_string(),
+                        "resolved" => "Resolved by the run.".to_string(),
+                        _ => "Recorded. Not delivered: this service can't run agents.".to_string(),
+                    },
                     InterventionStatus::Answered => format!("Answered: {}", intervention.response.clone().unwrap_or_default()),
                     InterventionStatus::Dismissed => "Dismissed".to_string(),
                     InterventionStatus::Unknown(ref raw) => raw.clone(),
                 })))
-            .when(open, |this| this.child(div().flex().gap_1()
+            .when(open && approval, |this| this.child(div().flex().gap_1()
+                .child(components::button_sm(Button::new(SharedString::from(format!("inbox-reject-{}", intervention.id))).ghost().label("Reject"))
+                    .on_click(cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.answer(&reject_id, "reject".into(), cx) })))
+                .child(components::button_sm(Button::new(SharedString::from(format!("inbox-approve-{}", intervention.id))).primary().label("Approve"))
+                    .on_click(cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.answer(&approve_id, "approve".into(), cx) })))))
+            .when(open && !approval, |this| this.child(div().flex().gap_1()
                 .child(components::button_sm(Button::new(SharedString::from(format!("inbox-dismiss-{}", intervention.id))).ghost().label("Dismiss"))
                     .on_click(cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.update(&dismiss, InterventionStatus::Dismissed, None, cx) })))
                 .child(components::button_sm(Button::new(SharedString::from(format!("inbox-answer-{}", intervention.id))).outline().label("Answer"))
@@ -384,6 +419,16 @@ impl Settings {
             .child(components::section_label("General", cx))
             .child(components::section_card(cx)
             .child(setting_row("Default harness", "Used for new agents.", harness, cx))
+            .child(components::row_divider(cx))
+            .child(setting_row("Motion", "Reduce animations in this app. System follows your Mac.",
+                ui::segmented("motion", &[(protocol::Motion::System, "System"), (protocol::Motion::Reduce, "Reduce"), (protocol::Motion::Full, "Full")],
+                    settings.motion.clone().unwrap_or(protocol::Motion::System), {
+                        let weak = weak.clone();
+                        move |motion, _, cx| {
+                            crate::motion::apply(Some(&motion), cx);
+                            weak.update(cx, |this, cx| this.edit(cx, |s| s.motion = Some(motion))).ok();
+                        }
+                    }, cx), cx))
             .child(components::row_divider(cx))
             .child(setting_row("Notifications", "Notify when something needs you.", Switch::new("notifications").checked(notifications)
                 .on_click(cx.listener(|this, checked: &bool, _, cx| { let checked = *checked; this.edit(cx, |s| s.notifications = checked) })), cx))

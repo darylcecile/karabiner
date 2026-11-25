@@ -1,0 +1,15 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"plugins": ["typescript", "unicorn", "oxc"],
+	"categories": {
+		"correctness": "error"
+	},
+	"env": {
+		"builtin": true
+	},
+	"jsPlugins": ["./ox/plugin.ts"],
+	"rules": {
+		"spacing/padding-between-statements": "error",
+		"one-var": ["error", "never"]
+	}
+}

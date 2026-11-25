@@ -1,0 +1,22 @@
+{
+  "checks": {
+    "factory-parallel": {
+      "command": "bun .groundwork/scripts/factory-parallel.ts",
+      "expect": "Real public-API/local-process fixtures prove editable fork drafts and config clearing, nested concurrency/join identity, scoped recovery/cancellation, retry permission/checkpoint correlation, typed forms and bounded joined context",
+      "kind": "workflow",
+      "paths": ["packages/contracts/**", "packages/service/src/**", ".groundwork/scripts/factory-parallel.ts", ".groundwork/scripts/fixtures/factory-duplex.ts", ".groundwork/scripts/fixtures/factory-checkpoint.ts", ".groundwork/scripts/fixtures/factory-context.ts"],
+      "artifacts": ["factory-parallel.json"],
+      "result": "result.json",
+      "context": { "fixture": "owned-public-api-parallel", "providers": "local-fixtures-only", "externalWrites": false }
+    },
+    "factory-harnesses": {
+      "command": "bun .groundwork/scripts/factory-harnesses.ts",
+      "expect": "The compiled service and published SDKs/controlled native peers exercise permissions, typed responses, active guidance, cancellation, effects and cleanup, plus the real Strands tool boundary",
+      "kind": "workflow",
+      "paths": ["packages/service/**", "packages/contracts/**", "bun.lock", ".groundwork/scripts/factory-harnesses.ts", ".groundwork/scripts/fixtures/native-harness-*.ts"],
+      "artifacts": ["factory-harnesses.json"],
+      "result": "result.json",
+      "context": { "fixture": "released-native-sdk-controlled-peers", "externalWrites": false }
+    }
+  }
+}

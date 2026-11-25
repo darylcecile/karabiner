@@ -1,11 +1,8 @@
-import type { Run } from "@karabiner/contracts";
+import { FactoryRuntime, type RuntimeOptions } from "./runtime/scheduler.ts";
 
-/** User-owned extension point for observed execution records, independent from CRUD. */
-export interface RunReader {
-  list(filter: { taskId?: string }): Promise<Run[]>;
-  get(id: string): Promise<Run | null>;
+export { FactoryRuntime, type RuntimeOptions } from "./runtime/scheduler.ts";
+export type { AdapterRequest, AgentOutcome } from "./runtime/adapter-types.ts";
+
+export function createRuntime(options: RuntimeOptions): FactoryRuntime {
+	return new FactoryRuntime(options);
 }
-export const unimplementedRuns: RunReader = {
-  async list() { return []; },
-  async get() { return null; },
-};

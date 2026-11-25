@@ -1,0 +1,13 @@
+{
+  "checks": {
+    "factory-github-readonly": {
+      "command": "FACTORY_GITHUB_READONLY=1 bun .groundwork/scripts/factory-integrations.ts",
+      "expect": "Actual IntegrationService reads only approved GitHub user/repository metadata and its named catalog using existing gh authentication, with isolated local state and no remote writes",
+      "kind": "api",
+      "paths": ["packages/service/src/integrations/**", ".groundwork/scripts/factory-integrations.ts"],
+      "artifacts": ["github-readonly.json"],
+      "result": "result.json",
+      "context": { "fixture": "isolated-live-github-readonly", "externalWrites": false, "liveNetwork": true }
+    }
+  }
+}

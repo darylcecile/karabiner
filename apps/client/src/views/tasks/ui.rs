@@ -139,6 +139,7 @@ pub fn harness_label(harness: &HarnessId) -> &'static str {
         HarnessId::Claude => "Claude Code",
         HarnessId::Codex => "Codex",
         HarnessId::Copilot => "Copilot CLI",
+        HarnessId::Strands => "Strands Agents",
         HarnessId::Custom => "Custom executable",
         HarnessId::Unknown(_) => "Unknown harness",
     }
@@ -304,6 +305,17 @@ pub fn amber_chip(text: impl Into<SharedString>, cx: &App) -> Div {
     components::status_pill(text, Tone::Attention, cx)
 }
 
+/// The connected service is older than this feature: say so instead of offering a control
+/// that would fail. `what` completes "Update Karabiner's service to …".
+pub fn update_service_note(what: &str, cx: &App) -> Div {
+    div().t_caption().text_color(theme::tokens(cx).text_secondary).child(format!("Update Karabiner's service to {what}."))
+}
+
+pub fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
 /// Field caption above a control ("Name", "Exit rule").
 pub fn caption(text: impl Into<SharedString>, cx: &App) -> Div {
     div().t_label().font_weight(FontWeight::MEDIUM).text_color(theme::tokens(cx).text).child(text.into())
@@ -311,6 +323,11 @@ pub fn caption(text: impl Into<SharedString>, cx: &App) -> Div {
 
 /// Form field: caption above a control, 6 between them.
 pub fn field(label: &'static str, control: impl IntoElement, cx: &App) -> Div {
+    field_owned(label, control, cx)
+}
+
+/// `field` with a runtime label.
+pub fn field_owned(label: impl Into<SharedString>, control: impl IntoElement, cx: &App) -> Div {
     div().flex().flex_col().gap_1p5().child(caption(label, cx)).child(control)
 }
 

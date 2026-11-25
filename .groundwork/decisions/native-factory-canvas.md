@@ -1,0 +1,55 @@
+# Port relevant React Flow graph behavior to native GPUI
+
+Status: accepted and implemented, 2026-11-25, including the user's horizontal-canvas and form-layout amendments. Final native connection run `2026-11-25T22-05-32-079Z_957b877b` passed; all eight final Opus 5.5 review observations passed with explicitly retained earlier scopes. The [capability matrix](../guides/factory-capabilities.md) links exact evidence and live prerequisites.
+
+Related: [native client boundary](client-service-boundary.md), [factory execution boundary](factory-execution-boundary.md).
+
+## Decision
+
+Implement the factory graph canvas natively in GPUI inside the existing project's Workflow pane. Adapt relevant React Flow graph, viewport, edge and interaction algorithms from its MIT-licensed source into Rust/GPUI, with attribution and the required license notice. Preserve the relevant interaction behavior and native design language, subject to the user's explicit amendments: **left-to-right workflow layout, inputs on the left boundary, outputs on the right boundary, and no visible React Flow branding label**. Keep native workflow forms/controller, shell, overlays, input/focus and project drafts in the same client. React itself does not run in GPUI; there is no React frontend/runtime or webview in this design.
+
+Two complementary UI surfaces own the work: reusable canvas mechanics under `apps/client/src/components/factory_canvas/`, and native forms/controller under `apps/client/src/views/workflow/factory/` with service-backed configuration. The service remains responsible for factory validation, compilation and execution. Canvas layout is separate from executable edges; native graph links represent real branching and return paths through the shared factory contract.
+
+## Reason
+
+The user's clarification is explicit: “React Flow is open source, so we can just port a version of it to GPUI for use inside our client” and “that way we dont need webview”. The user then required the native version to behave and look the same as React Flow, keeping its design. Native rendering preserves the existing GPUI shell and independent client distribution while using React Flow's established interaction/geometry work. It also keeps configuration/draft/focus state in the native client instead of introducing a web/native message bridge and separate web UI build/runtime boundary.
+
+The port in [`factory_canvas/xyflow.rs`](../../apps/client/src/components/factory_canvas/xyflow.rs) identifies published `@xyflow/system` 1.0.1, used by `@xyflow/react` 13.0.3, and the adapted edge, viewport, handle, pan/zoom and marker source files. It retains the full MIT notice. Upstream references: [xyflow source](https://github.com/xyflow/xyflow), [React Flow documentation](https://reactflow.dev/learn), [MIT license](https://github.com/xyflow/xyflow/blob/main/LICENSE). This decision covers the factory's relevant graph behavior, not full React Flow API parity.
+
+### Explicit visual amendment
+
+The user's latest rendered example identifies clipped status chips on MXC/Apple target cards, broader form overflow, repeated nested borders, arbitrary indentation and a long undifferentiated form. Opus 5.5 completed the bounded visual research using four actual public Linear screens, accepted by the parent: [team settings index](https://assets.nicelydone.club/f/64b6f214-3bd1-4396-baf3-9969a98fd7a7.png), [auto-close/archive settings](https://webassets.linear.app/images/ornj730p/production/0a606026aaf048903bfb7b86585b5fecf24cb033-1418x968.png), [status groups](https://webassets.linear.app/images/ornj730p/production/c52f79b144c3ed5ed124e85d02e619b3429b1395-1922x1350.png) and [team context menu](https://assets.nicelydone.club/f/9ee19645-cc46-4676-bd27-c7c4ef836c5a.png). The exact source manifest and viewed `v-*` copies are retained in external `manual-evidence/factory-form-research-linear-2026-11-25/`, copied unchanged from `/private/var/folders/zh/l70grz9n3ll9j9c_f1ghp7gr0000gn/T/opencode/form-research/`. Orca was not opened; the request was examples **like Orca or Linear**, so the accepted Linear research closes this research scope.
+
+The same instruction explicitly replaces the prior top-input/bottom-output, vertical-reference geometry with left-input/right-output, left-to-right workflow geometry. Native graph defaults, connections, return paths and hit targets must agree with the displayed boundary handles. A visible React Flow label is removed; the MIT copyright/permission notice and adapted-source attribution stay in source/distribution. Return-to-stage editing becomes a **multiselect dropdown**, with selected targets preserved on save/reopen, rather than an always-visible checkbox wall. Existing workflow semantics and saved identities remain authoritative.
+
+**Observed reference patterns:** the retained Linear screens show aligned rows, restrained surfaces, clear sections/indexing and dependent settings. The auto-close/archive screen includes subtly outlined select controls **inside an outlined group**. These references do not establish a “no inner borders” or “one border level” rule.
+
+**Chosen Karabiner direction:** the user's explicit request to remove the nested-border look takes precedence over literal reference copying. Apply the following choices within the native control language:
+
+- **Flatten decorative wrappers; each input owns its border.** Remove redundant nested framing and use spacing/separators to distinguish groups. A control's normal outline remains useful; do not interpret this as banning every outlined control inside a grouped surface.
+- **Aligned responsive rows.** Labels/descriptions and controls share consistent columns and edges; stack when the allocated pane is narrow. Target status chips retain enough room for their content, including long labels, instead of being squeezed or clipped.
+- **Meaningful inspector sections.** Group related settings and use disclosure for secondary detail, preserving access to every existing field without arbitrary indentation.
+- **Bounded selection and menus.** Return-target multiselect keeps a compact summary and bounded option list; menus fit the current viewport so targets remain reachable at narrow widths and near edges.
+
+The observed patterns come from the retained Linear screens; the border treatment, horizontal geometry and multiselect are user-directed Karabiner choices, not claims that Linear uses those exact rules. No Orca rendering was observed. Final Opus visual/interaction acceptance covers the forms, multiselect, horizontal ports/connections and grid on clean client `9019f58f61c61b664417f4faca7ddc84372f8a276c64488806b64d1d3dab3b31`, alongside explicitly retained earlier captures.
+
+## Evaluated alternative
+
+An embedded WKWebView was technically available through the existing `gpui-pre 0.3.14` `NativeView` and its `examples/native_view.rs`, including compositing, clipping, action reservation and a JavaScript handler. It was evaluated before the user's native-port clarification. The explicit native direction removes the need for that embedding/bridge work. No webview implementation or runtime result is claimed.
+
+## Consequences
+
+- Reuse the existing GPUI rendering, input, overlays, reduced-motion, native API and draft save/close patterns. The canvas fills its content allocation with the amended horizontal flow; surrounding native forms/shell keep the app's established typography/spacing/icon language and use clear groups rather than repeated nested border boxes.
+- Panel docking follows allocated pane width: 220pt library + 320pt inspector leave a 480pt canvas at 1020pt; below that the library floats, and below 800pt the inspector floats too. Toolbar toggles/close rows expose the full canvas without changing the surrounding shell layout.
+- A floating inspector intentionally overlays the existing canvas allocation. In the accepted900-window capture it occludes some underlying stages until closed; that is not clipped graph geometry. Normal-width Fit shows all nodes and outer ports.
+- Live run invalidations do not manufacture configuration edits. Unchanged config refreshes preserve validation/canvas state; equivalent field callbacks do not dirty or advance the draft generation. Initial fit follows the settling slot only until user interaction, and never reframes an active gesture; explicit Fit remains available.
+- Port the algorithms and interactions needed for this factory: viewport pan/zoom, node positions/dragging/selection, handles, edge geometry, connect/reconnect/removal and usable configuration. Preserve real branch/return execution semantics rather than flattening the graph into a positional stage list.
+- For copied or substantially adapted source, retain the upstream MIT copyright and complete permission notice in the delivered code/distribution, and identify the adapted files/revision. The inspected current license reads `Copyright (c) 2019-2025 webkid GmbH`; the selected implementation revision's notice is authoritative.
+- Native implementation owns geometry, hit testing and interaction quality. Opus 5.5 completed the visual research and final review. Earlier records retain their scope; the final review explicitly combines actual new geometry/forms/connection observations with retained manual passes.
+- Grid dots are emitted as **one GPUI path**. The measured per-dot paint/bounds-tree workload previously starved foreground HTTP completions despite fast service responses; batching removes that bottleneck while preserving grid spacing/contrast. This is not a cache framework. Temporary phase instrumentation and the ineffective background-I/O experiment were removed before the accepted clean build.
+- Reuse bounded canonical React Flow references for unchanged interaction/styling claims, while the explicit horizontal/no-branding direction overrides conflicting reference geometry. Reuse the accepted, retained Linear rendered references for form grouping. The final Opus reviewer compares actual native captures to the applicable references and user direction; source familiarity is not visual evidence.
+- Final affected acceptance covers normal/narrow allocations and long labels: MXC/Apple status-chip visibility, readable grouped forms without triple border framing or arbitrary indentation, multiselect save/reopen, left/right boundary handles and horizontal connections/returns. It also closes the remaining functional GUI gates. Run only after the coherent implementation, an explicit app-executable build with source/binary identities, independent hash confirmation and parent release. A compile result establishes neither interaction nor visual acceptance.
+
+## Environment boundary
+
+Preserve the user's running service, database, local login and unrelated work. Implementation does not authorize replacing a running native binary, changing signing/entitlements, restarting the user's service or resetting data. Use isolated fixture state for coordinated verification and report a necessary setup-changing action before proceeding.

@@ -376,6 +376,8 @@ fn span_status_label(status: &RunStepStatus) -> String {
         RunStepStatus::Completed => "Done".into(),
         RunStepStatus::Failed => "Failed".into(),
         RunStepStatus::NeedsApproval => "Needs approval".into(),
+        RunStepStatus::Cancelled => "Cancelled".into(),
+        RunStepStatus::Skipped => "Skipped".into(),
         RunStepStatus::Unknown(raw) => raw.clone(),
     }
 }

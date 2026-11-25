@@ -56,7 +56,7 @@ try {
   for (const build of builds) assert.equal(build.success, true, build.logs.join("\n"));
   observed("independent executables compiled", ["karabiner-service", "karabiner"]);
   await start();
-  const meta = await cli<ServiceMeta>(["status"]); assert.equal(meta.apiVersion, 1); assert.equal(meta.capabilities.storage, true); assert.equal(meta.capabilities.harnessExecution, false);
+  const meta = await cli<ServiceMeta>(["status"]); assert.equal(meta.apiVersion, 1); assert.equal(meta.capabilities.storage, true); assert.equal(meta.capabilities.harnessExecution, true);
   assert.deepEqual(await cli(["project", "list"]), []);
   const project = await cli<Project>(["project", "create", "Roundtrip fixture", "--kind", "github", "--repository", "example/fixture"]);
   const task = await cli<Task>(["task", "create", "Inspect a stored task", "--project", project.id]);
@@ -91,11 +91,10 @@ try {
   const intervention = await cli<Intervention>(["intervention", "record", "Which verification should we run?", "--project", project.id, "--task", task.id, "--kind", "question"]);
   const answered = await cli<Intervention>(["intervention", "answer", intervention.id, "Use the focused checks"]);
   assert.equal(answered.status, "answered"); assert.equal(answered.executionStatus, "not_implemented");
-  await cli(["run", task.id], "not_implemented");
   assert.deepEqual(await cli(["api", "GET", "/v1/runs"]), []);
   await cli(["api", "GET", "/v1/runs/unrecorded-run"], "not_found");
   const stats = await cli<Statistics>(["stats", "--project", project.id]);
-  assert.equal(stats.taskCount, 1); assert.equal(stats.completedTaskCount, 1); assert.equal(stats.completionRate, 1); assert.equal(stats.runCount, null);
+  assert.equal(stats.taskCount, 1); assert.equal(stats.completedTaskCount, 1); assert.equal(stats.completionRate, 1); assert.equal(stats.runCount, 0); assert.equal(stats.executionAvailable, true);
   observed("persisted CRUD, settings, intents and derived statistics", { project, task: updated, document: revised, configRevision: savedConfig.revision, settings, workspace: savedWorkspace, intervention: answered, stats });
   const invalidFlag = await cli(["task", "update", task.id, "--project", project.id], "usage");
   const invalidStatsFlag = await cli(["stats", "--task", task.id], "usage");
@@ -136,7 +135,7 @@ try {
   if (eventReader) await eventReader.cancel().catch(() => {});
   try { await stop(); } catch (error) { failure = [failure, `Cleanup: ${String(error)}`].filter(Boolean).join("\n"); process.exitCode = 1; }
   await Bun.write(join(evidence, "roundtrip.json"), JSON.stringify({ fixture: "isolated compiled CLI/service with SQLite", cliCalls, observations, failure: failure ?? null }, null, 2));
-  await Bun.write(join(evidence, "result.json"), JSON.stringify({ observations: [{ status: failure ? "failed" : "passed", observed: failure ?? `${cliCalls} CLI calls verified real persistence across restart, revision conflicts, typed tours, saved workspace state, SSE invalidation, and honest unavailable execution.`, evidence: ["roundtrip.json"] }] }, null, 2));
+  await Bun.write(join(evidence, "result.json"), JSON.stringify({ observations: [{ status: failure ? "failed" : "passed", observed: failure ?? `${cliCalls} CLI calls verified persistence across restart, revision conflicts, typed tours, saved workspace state, SSE invalidation, and available execution with no runs created by CRUD.`, evidence: ["roundtrip.json"] }] }, null, 2));
   await rm(temporary, { recursive: true, force: true });
 }
 if (failure) console.error(failure); else console.log(`Backend smoke passed: ${cliCalls} CLI calls; evidence ${join(evidence, "roundtrip.json")}`);

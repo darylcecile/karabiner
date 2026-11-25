@@ -1,0 +1,39 @@
+{
+  "checks": {
+    "factory-complete-client": {
+      "command": "FACTORY_JOURNEYS=\"${FACTORY_JOURNEYS:-connected_setup motion_setting fork_run horizontal_connect return_multiselect form_layout_review viewport_keyboard parallel_authoring quick_open_after_edit responsive_review}\" KARABINER_CLIENT_BIN=\"$PWD/target/agent/debug/karabiner\" zsh .groundwork/scripts/factory-complete-client.sh",
+      "expect": "The selected native journeys assert named mappings and explicit push retry/effects, running-state motion, branch/attempt history, rendered horizontal defaults and a right-output/left-input connection, return multiselect save/reopen/clear, form-label visibility and section headers, editor history/clipboard/keyboard/viewport behavior, saved-revision validation and Quick Open. Only recorded assertions count; grouping, clipping, handles and normal/narrow usability require actual Opus visual review.",
+      "kind": "ui",
+      "paths": ["apps/client/**", "crates/protocol/**", ".groundwork/scripts/factory-complete-client.sh", ".groundwork/scripts/factory-client-smoke.sh", ".groundwork/scripts/factory-complete-service.ts", ".groundwork/scripts/factory-client-fixture.ts", ".groundwork/scripts/fixtures/factory-harness.ts", ".groundwork/scripts/fixtures/native-harness-peer.ts"],
+      "artifacts": ["journey.txt"],
+      "result": "result.json",
+      "context": { "fixture": "owned-native-client-injected-connectors", "providers": "local-fixtures-only", "externalWrites": false, "journeySelection": "Caller FACTORY_JOURNEYS override; otherwise the documented ten-journey default. Actual coverage is limited to recorded observations." }
+    },
+    "factory-builder": {
+      "command": "zsh .groundwork/scripts/factory-client-smoke.sh",
+      "expect": "The native fixture drives real graph edits, revision/draft handling, task questions/approval and output UI, retaining state assertions and actual native/canonical React Flow captures for review",
+      "kind": "ui",
+      "paths": ["apps/client/**", "crates/protocol/**", ".groundwork/scripts/factory-client-smoke.sh", ".groundwork/scripts/factory-client-fixture.ts"],
+      "artifacts": ["journey.txt"],
+      "result": "result.json"
+    },
+    "factory-builder-tail": {
+      "command": "FACTORY_TAIL=1 zsh .groundwork/scripts/factory-client-smoke.sh",
+      "expect": "The focused native tail captures and asserts Save/Validate settling, correctly targeted dragging during live updates and narrow panel allocation; it does not replay or claim the full factory journey",
+      "kind": "ui",
+      "paths": ["apps/client/**", ".groundwork/scripts/factory-client-smoke.sh", ".groundwork/scripts/factory-client-fixture.ts", ".groundwork/scripts/fixtures/factory-harness.ts"],
+      "artifacts": ["journey.txt"],
+      "result": "result.json",
+      "context": { "journey": "native-tail", "fullJourney": false }
+    },
+    "factory-visual-review": {
+      "command": "bun .groundwork/scripts/factory-client-review.ts",
+      "expect": "An actual Opus post-capture review records claim-specific observations against retained native/React Flow evidence, preserving capture hashes without claiming another UI execution",
+      "kind": "agent",
+      "paths": [".groundwork/scripts/factory-client-review.ts"],
+      "artifacts": ["review-source.json"],
+      "result": "result.json",
+      "context": { "observationMode": "retained-capture-review", "freshUiExecution": false }
+    }
+  }
+}

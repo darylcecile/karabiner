@@ -82,6 +82,22 @@ impl ApiClient {
         decode::<Deleted>(&bytes).map(|_| ())
     }
 
+    /// Opens a server-sent events stream and returns its body unread, for incremental reads.
+    pub async fn stream(&self, path: &str) -> ApiResult<AsyncBody> {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(format!("{}{path}", self.base_url))
+            .header(http::header::ACCEPT, "text/event-stream")
+            .body(AsyncBody::empty())
+            .map_err(|error| ApiError::Unavailable(error.to_string()))?;
+        let response = self.http.send(request).await.map_err(|error| ApiError::Unavailable(error.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Status { status: status.as_u16(), body: None });
+        }
+        Ok(response.into_body())
+    }
+
     async fn send<B: Serialize, T: DeserializeOwned>(
         &self,
         method: Method,

@@ -185,7 +185,10 @@ impl AppShell {
         self._settings = Some(cx.spawn_in(window, async move |_, cx| {
             match api.get::<AppSettings>("/v1/settings").await {
                 Ok(settings) => {
-                    cx.update(|window, cx| theme::apply(settings.theme, window, cx)).ok();
+                    cx.update(|window, cx| {
+                        theme::apply(settings.theme, window, cx);
+                        motion::apply(settings.motion.as_ref(), cx);
+                    }).ok();
                 }
                 Err(error) => log::warn!("settings not loaded: {error}"),
             }

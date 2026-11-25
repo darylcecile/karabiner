@@ -48,6 +48,7 @@ pub struct TaskDetail {
     activity: Load<Vec<Activity>>,
     interventions: Load<Vec<Intervention>>,
     runs: Entity<RunsPanel>,
+    source: Entity<super::source::SourceLink>,
     pane: Pane,
     /// Full tab's measured width; below `RAIL_MIN_W` the properties stack above the content.
     body_width: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
@@ -113,6 +114,7 @@ impl TaskDetail {
             TextareaState::new(window, cx).auto_grow(2, 6).placeholder("Write an instruction or answer for the agent…")
         });
         let runs = cx.new(|cx| RunsPanel::new(state.clone(), project_id.clone(), task_id.clone(), window, cx));
+        let source = cx.new(|_| super::source::SourceLink::new(state.clone()));
         let due = cx.new(|cx| CalendarState::new(window, cx));
         let due_input = cx.new(|cx| InputState::new(window, cx).placeholder("What date is this due?"));
         let subtask_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add subtask"));
@@ -202,6 +204,7 @@ impl TaskDetail {
             activity: Load::Loading,
             interventions: Load::Loading,
             runs,
+            source,
             pane: Pane::Activity,
             body_width: Default::default(),
             title,
@@ -840,12 +843,14 @@ impl TaskDetail {
                 .child(Self::property_row("Workflow", SIDE_LABEL_W, p.workflow, cx))
                 .child(Self::property_row("Stage", SIDE_LABEL_W, p.stage, cx)))
             .child(property_group("Labels", cx).child(p.labels))
+            .when(self.source.read(cx).is_shown(), |this| this.child(property_group("Source", cx).child(self.source.clone())))
     }
 
     fn render_interventions(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let weak = cx.weak_entity();
         let open: Vec<Intervention> = self.interventions.ready().map_or_else(Vec::new, |list| {
-            list.iter().filter(|item| item.status == InterventionStatus::Recorded).cloned().collect()
+            // Run questions are answered once, with their run controls, in the Runs pane.
+            list.iter().filter(|item| item.status == InterventionStatus::Recorded && item.question_id.is_none()).cloned().collect()
         });
         let kind = self.compose_kind.clone();
         let kinds = [
@@ -896,7 +901,7 @@ impl TaskDetail {
                             .on_click(cx.listener(|this, _, _, cx| this.send_intervention(cx))))),
             )
             .child(div().t_caption().text_color(t.text_secondary)
-                .child("Interventions are stored for the agent. Delivery starts once execution is available."))
+                .child("Recorded on the task. To guide a running agent, use Add instruction on the run under Runs."))
             .children(self.compose_error.clone().map(|error| div().t_label().text_color(cx.theme().danger).child(error)))
     }
 
@@ -998,7 +1003,8 @@ impl TaskDetail {
                 .children(self.render_read_error(cx))
                 .child(self.render_title(cx)))
             .child(div().id("task-detail-scroll").flex_1().min_h_0().overflow_y_scroll()
-                .child(div().px_5().py_5().flex().flex_col().gap_6()
+                // Content-sized (no shrink), so the scroll extent covers a growing run list.
+                .child(div().flex_none().px_5().py_5().flex().flex_col().gap_6()
                     .child(self.render_property_grid(cx))
                     .child(self.render_description(true, cx))
                     .child(self.render_subtasks(cx))
@@ -1031,7 +1037,7 @@ impl TaskDetail {
                 .child(div().flex_1().child(self.render_header(task, cx))))
             .child(div().flex_1().min_h_0().flex()
                 .child(div().id("task-main-scroll").flex_1().min_w_0().h_full().overflow_y_scroll()
-                    .child(div().w_full().max_w(px(metrics::READ_W + 2. * metrics::GUTTER_X)).mx_auto().px(px(metrics::GUTTER_X)).pt_6().pb_8()
+                    .child(div().flex_none().w_full().max_w(px(metrics::READ_W + 2. * metrics::GUTTER_X)).mx_auto().px(px(metrics::GUTTER_X)).pt_6().pb_8()
                         .flex().flex_col().gap_6()
                         .child(div().flex().flex_col().gap_3()
                             .children(self.render_read_error(cx))
@@ -1065,7 +1071,15 @@ impl TaskDetail {
 impl Render for TaskDetail {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stages = self.workflow_stages();
-        self.runs.update(cx, |runs, _| runs.set_stages(stages));
+        let agents = self.config.as_ref().map_or_else(Vec::new, |config| config.agents.iter().map(|agent| (agent.id.clone(), agent.name.clone())).collect());
+        self.runs.update(cx, |runs, _| runs.set_stages(stages, agents));
+        let integration = self.config.as_ref().and_then(|config| config.integration.clone());
+        let task = self.task.ready().cloned();
+        let provider = integration.as_ref().map(|i| i.provider.clone()).or_else(|| task.as_ref().and_then(|task| task.external.as_ref().map(|e| e.provider.clone())));
+        let push = integration.as_ref().is_some_and(|i| i.push_enabled == Some(true));
+        let fields = integration.and_then(|i| i.push_fields);
+        let dirty = self.dirty;
+        self.source.update(cx, |source, _| source.set(task, provider, push, fields, dirty));
         let content = match &self.task {
             Load::Loading => div().p_5().child(ui::skeleton_rows(4, cx)).into_any_element(),
             Load::Failed(error) => {
@@ -1209,9 +1223,12 @@ fn is_date(value: &str) -> bool {
 
 /// Client-generated id for nested records the service stores verbatim (subtasks, config items).
 pub fn new_id(prefix: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    // The counter keeps ids unique when several are made within one clock tick (paste).
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |time| time.as_nanos());
-    format!("{prefix}_{nanos:x}")
+    format!("{prefix}_{nanos:x}{:x}", COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
 impl Draft for TaskDetail {

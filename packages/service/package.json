@@ -1,8 +1,31 @@
 {
-  "name": "@karabiner/service", "version": "0.1.0", "private": true, "type": "module",
-  "scripts": {
-    "start": "bun src/main.ts",
-    "build": "bun build src/main.ts --compile --outfile ../../dist/karabiner-service"
-  },
-  "dependencies": { "@karabiner/contracts": "workspace:*" }
+	"name": "@karabiner/service",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"start": "bun src/main.ts",
+		"build": "bun build src/main.ts --compile --outfile ../../dist/karabiner-service",
+		"fmt": "oxfmt",
+		"fmt:check": "oxfmt --check",
+		"lint": "oxlint",
+		"lint:fix": "oxlint --fix",
+		"format": "bun lint:fix && bun fmt"
+	},
+	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "0.3.332",
+		"@cedar-policy/cedar-wasm": "4.14.0",
+		"@cedar-policy/mcp-schema-generator-wasm": "0.6.1",
+		"@google/genai": "2.30.0",
+		"@karabiner/contracts": "workspace:*",
+		"@microsoft/copilot-sdk": "2.0.3",
+		"@strands-agents/harness": "^0.5.0",
+		"@strands-agents/sdk": "1.26.0",
+		"openai": "6.45.0"
+	},
+	"devDependencies": {
+		"@oxlint/plugins": "^1.95.0",
+		"oxfmt": "^0.80.0",
+		"oxlint": "^1.95.0"
+	}
 }

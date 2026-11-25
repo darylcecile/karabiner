@@ -1,0 +1,37 @@
+# Factory-runtime verification journey
+
+`factory-runtime` uses `.groundwork/scripts/factory-runtime.ts` and the existing local process/duplex fixtures. It builds separate service/CLI binaries, starts an owned ephemeral-loopback service with temporary SQLite, and creates isolated Git repositories. Its five serial business scenarios are retained alongside exact CLI readiness/interaction cases. Every file/process effect belongs to those fixtures; the user's existing service, database, projects, authentication and native app are outside the journey.
+
+## Assertions
+
+- Save a native-equivalent graph through the CLI; compile, move its visual layout, export/import the portable JSON bundle and retain executable identity. Observe actionable invalid-edge validation and stale-write conflicts.
+- Execute a real custom local harness using `karabiner-harness-v1` stdin/stdout. Before hooks, agents, gates and after hooks perform actual temporary effects. One failure branch enters repair; an explicit return selects implementation from two declared destinations; two distinct reviewers run despite task assignment. Legacy ordered workflows preserve their multiple return references through compilation.
+- Capture configuration at start, edit mutable configuration afterward, then stop/restart only the owned service at a durable human-question checkpoint. The same question and snapshot survive; a direct CLI answer resumes execution into an approval gate and completion.
+- Assert actual changed file content, generated Markdown/code-tour provenance and diff, observed duration/token totals and unknown cost.
+- Start a second task directly at its captured decision stage; resolve its question and reject approval. Observe only the actually executed stage and its real gate failure.
+- Exercise cooperative pause at a real process boundary, resume, owned-process cancellation and explicit retry provenance. A local recording proxy establishes exact CLI response preservation and a single mutation submission when an accepted start reply is lost.
+- Stop/restart the owned service during a running process. Its interrupted effects require operator review instead of automatic replay. Waiting questions are safe checkpoints and have different recovery semantics.
+- Enable scheduler pickup explicitly and observe one execution across subsequent eligible polls.
+- Strands now has one authoritative home in `factory-harnesses` / `fixtures/native-harness-strands.ts`: actual SDK write/shell/read tools, native permission/live question/guidance, denial/cancel behavior, usage/tool spans and SQLite session snapshots. The obsolete checkpoint-only duplicate fixture is retired; earlier run records keep their original scenario counts.
+
+## Evidence and limits
+
+Run after the implementation batch is coherent with the selected checks and saved plan in one coordinated Groundwork invocation. The check writes `factory-runtime.json` and structured `result.json` to `GROUNDWORK_EVIDENCE_DIR`; retain the invocation's own external run ID. Inspect scenario outcomes, process call journals, run snapshots, exact mutation receipts and actual diff/tool results before claiming a pass.
+
+Groundwork selects checks in merged catalogue order and executes them sequentially; command-line name order does not reorder them. `t-factory-runtime.json` and `u-factory-integrations.json` follow the existing client/service checks. Register the native `factory-builder` fragment last. Its script consumes the already-built `target/debug/karabiner` and reports a missing binary rather than building or replacing the user's app itself.
+
+`factory-integrations` adds three bounded injected/local scenarios: Linear pagination/identity/conflict/tombstone handling; GitHub uncertain-create reconciliation and receipt reuse; host context, MXC fd3 configuration/independent stdin, and Apple invocation/owned cleanup on failure and cancellation. It writes `factory-integrations.json`. These are adapter-contract observations using local fakes, not live provider or containment observations.
+
+This fixture does not establish live Claude/Codex/Copilot authentication or remote model access, GitHub/Linear connectivity, MXC/Apple-container operation, or native graphical/visual parity. Those need their own claim-specific evidence. In particular, installed CLI discovery is not authentication proof; Claude's noninteractive permission-prompt flag requires version 2.1.259 or later, and local permission policy still governs tool access. Preserve user-configured permissions. Report unknown token/cost values honestly, including CLI subscription cost.
+
+The native factory-builder journey and Opus comparison against actual canonical React Flow captures are separate. Reference the [native canvas decision](../decisions/native-factory-canvas.md) and [execution boundary decision](../decisions/factory-execution-boundary.md) for rationale; neither a configured check nor this guide is a runtime pass.
+
+## Native capture and post-capture review
+
+`factory-builder` runs `zsh .groundwork/scripts/factory-client-smoke.sh` with the UI-only plan `.groundwork/plans/factory-client.json`. It consumes an already-built native binary and launches a byte-identical temporary copy. The last-sorted catalogue fragment `zz-factory-client.json` keeps required native build/tests before this graphical check. Its result must enumerate concrete JSON/PNG evidence files; directories are not evidence files. Unobserved interactions remain unverified.
+
+After Opus actually inspects the native/canonical captures, the reviewer writes standard Groundwork review JSON beside those files: `observations` with `kind: "review"`, honest `status`, exact requirement IDs in `covers`, concrete `observed` conclusions and relative file paths in `evidence`. IDs are `native-factory-builder`, `react-flow-parity`, `builder-service-roundtrip`, `client-execution-controls`, `client-output-review` and `native-visual-review`. A passed observation must not cover an interaction that was not exercised or otherwise established by its cited evidence.
+
+For the bounded regression tail, use `factory-builder-tail` with `.groundwork/plans/factory-client-tail.json`. Its command explicitly sets `FACTORY_TAIL=1` and declares `journey: native-tail` / `fullJourney: false` in the record. A supplied `NARROW_TOGGLE` locator is inherited by the script; an absent locator stays an explicit observation gap. This tail does not establish another full native journey. Later review can combine its affected captures with hash-identified earlier evidence while preserving earlier failures and later mistarget clarifications.
+
+To retain that actual review separately, set `KARABINER_NATIVE_REVIEW` to the absolute review JSON path and run `groundwork verify factory-visual-review --plan .groundwork/plans/factory-client-review.json`. The small recorder copies only cited evidence, verifies matching hashes and preserves original capture provenance. It records a post-capture review, not a fresh native run, and schedules neither the native journey nor the backend/integration suites. Required static checks still follow project policy.

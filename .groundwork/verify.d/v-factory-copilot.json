@@ -1,0 +1,13 @@
+{
+  "checks": {
+    "factory-copilot-live": {
+      "command": "bun .groundwork/scripts/factory-harnesses.ts --live-copilot",
+      "expect": "With explicit KARABINER_LIVE_COPILOT=1 authorization, installed authenticated Copilot performs one bounded owned-workspace permission/tool/guidance journey and cleans only its owned sessions",
+      "kind": "workflow",
+      "paths": ["packages/service/src/runtime/**", ".groundwork/scripts/factory-harnesses.ts", ".groundwork/scripts/fixtures/native-harness-live.ts", ".groundwork/scripts/fixtures/native-harness-api.ts"],
+      "artifacts": ["factory-harnesses.json"],
+      "result": "result.json",
+      "context": { "fixture": "live-copilot-owned-workspace", "externalWrites": false }
+    }
+  }
+}

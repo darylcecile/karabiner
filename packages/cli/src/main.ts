@@ -5,6 +5,12 @@ import type { AppSettings, Document, Intervention } from "@karabiner/contracts";
 import manifest from "../package.json";
 import { Client, ClientError } from "./client.ts";
 import { seedDemo } from "./demo.ts";
+import { file, flag, jsonFile, query, required, validateFlags, type Flags } from "./arguments.ts";
+import { runCommand, questionCommand } from "./runtime.ts";
+import { integrationCommand } from "./integration.ts";
+import { factoryCommand } from "./factory.ts";
+import { availabilityCommand } from "./availability.ts";
+import { print } from "./output.ts";
 
 const HELP = `Karabiner — manage local project work through the background service
 
@@ -15,14 +21,35 @@ const HELP = `Karabiner — manage local project work through the background ser
   doc list | show ID | create TITLE | update ID | delete ID
   tour list | show ID | create TITLE | update ID | delete ID
   config get PROJECT | set PROJECT --file config.json
+  factory show|workflows PROJECT       Compiled factory or available workflows
+  factory validate|compile PROJECT [--file config.json]
+  factory export PROJECT [--output bundle.json | --directory DIR]
+  factory import PROJECT --file bundle.json --revision N
   settings get | set --theme dark [--harness copilot]
   workspace get | set --file workspace.json
   intervention list | show ID | record MESSAGE | answer ID TEXT | dismiss ID | delete ID
   activity [--project ID] [--task ID] [--limit 100]
   stats [--project ID]                 Counts from real stored records
   templates [show ID]                  Declarative onboarding templates
-  harnesses | targets                 Explicit adapter availability
-  run TASK                            Reports execution not implemented
+  harnesses [show ID]                  Harness discovery and reported capabilities
+  harnesses check --file agent.json [--project-root PATH] [--check]
+  harnesses check --project ID --agent ID [--check]
+  targets [show ID] [--project ID]      Target discovery
+  targets --project ID --check [--file config.json]
+    [--purpose command|harness] [--executable NAME]
+  run start TASK [--workflow ID]       Start execution; returns the actual run state
+  run list [--project ID] [--task ID] [--state STATE]
+  run show RUN [--project ID] [--task ID]
+  run pause|resume|cancel|retry RUN [--revision N]
+  run instruct RUN TEXT [--revision N] Submit guidance; inspect its delivery mode
+  question list [--run RUN] [--project ID] [--task ID]
+  question show QUESTION --run RUN     Request details, transport and offered choices
+  question answer QUESTION TEXT --run RUN [--revision N]
+  question answer QUESTION --run RUN --choice CHOICE [--revision N]
+  question answer QUESTION --run RUN --file response.json [--revision N]
+  integration status PROJECT [--check]
+  integration sync PROJECT [--conflict preserve-local|overwrite-local]
+  integration push TASK --revision N [--request-id ID] [--fields a,b] [--create-missing]
   demo seed                           Create clearly labelled sample records
   api METHOD /v1/PATH [--file body.json]
   service serve [--port N] [--db PATH]  Explicitly run the separate service
@@ -36,32 +63,49 @@ Create/update: --project ID, --description TEXT, --title TEXT, --name TEXT,
 Documents: --file Markdown-file; tours: --file tour.json; --content TEXT
 Any create/update: --data JSON-file (or - for stdin) for the full request body.
 Config/workspace files include the revision returned by get. IDs are complete IDs.
+Factory validation/compilation can read a JSON config draft without saving or running it.
+Fork/join is configured in workflow.graph.forks; for defined build/test/audit/review stages:
+  [{"id":"checks","stageId":"build","branches":[{"id":"tests","entryStageId":"test"},
+    {"id":"audit","entryStageId":"audit"}],"joinStageId":"review"}]
+Configure each branch's edges to its join. Validate before saving the complete config.
+Automatic step retry example in stage.execution: {"retries":2,"retryDelayMs":250}.
+Export prints the saved factory bundle unless an explicit destination is supplied.
+Export destinations must be new; --directory includes bundle.json and definition files.
+Import requires the target revision from config get PROJECT. --file - reads stdin.
+Run start also accepts --task TASK and --project PROJECT; run TASK is a shorthand.
+Run/factory show retain complete parallel branches, stage/retry attempts and configuration.
+Run instruct also accepts --message TEXT. Its delivery records distinguish native-turn,
+  native-tool-boundary and next-step; readiness and transport are reported by the service.
+Question list includes pending questions, approvals and permissions with run/question IDs.
+Use the exact offered choice ID. --file - reads a structured answer from stdin:
+  {"answer":"text"}, {"choice":"offered-id"},
+  {"answers":{"field-id":"value","multi-select-id":["first","second"]}},
+  or {"value":{"provider-field":"value"}} for the request's supplied schema.
+Harness and target status report availability and unknown authentication honestly.
+Harness checks read a full agent definition from --file (or - for stdin), or a saved agent.
+  For a file's relative executable, pass --project-root PATH explicitly. Saved agents use
+  their project's root; the agent file's directory is not used as the project root.
+  Default checks inspect local readiness; --check explicitly probes supported local login status.
+  Unknown authentication/model access stays unknown; unavailable/failed checks exit nonzero.
+Targets --project --check probes the configured target and reports each prerequisite.
+  --file checks an unsaved JSON config; unavailable/failed checks exit nonzero.
+Integration push fields: title, description, status, priority, labels, dueAt.
+Push requires the revision from task show; --create-missing explicitly allows creation.
+Integration mutations are sent once. Partial/conflicted/uncertain results exit nonzero.
 Delete project also deletes its tasks, documents, configuration and intervention records.
 Example: karabiner task create "Review navigation" --project PROJECT_ID --json
+Example: karabiner question answer QUESTION_ID "approved" --run RUN_ID --json
+Example: karabiner factory validate PROJECT_ID --file fork-join-config.json --json
+Example: karabiner run retry RUN_ID --revision 12 --json
+Example: karabiner question show QUESTION_ID --run RUN_ID
+Example: karabiner question answer QUESTION_ID --run RUN_ID --choice OFFERED_CHOICE_ID
+Example: karabiner question answer QUESTION_ID --run RUN_ID --file - --json
+Example: karabiner targets --project PROJECT_ID --check --purpose harness
+Example: karabiner harnesses check --project PROJECT_ID --agent AGENT_ID --check
+Example: karabiner harnesses check --file agent.json --project-root /path/to/project
 `;
-const stringOptions = ["url", "project", "task", "description", "title", "name", "kind", "status", "priority", "workflow", "agent", "stage", "due", "order", "labels", "template", "path", "repository", "external-ref", "color", "revision", "file", "data", "content", "message", "theme", "harness", "limit", "port", "db"] as const;
+const stringOptions = ["url", "project", "task", "description", "title", "name", "kind", "status", "priority", "workflow", "agent", "stage", "due", "order", "labels", "template", "path", "repository", "external-ref", "color", "revision", "file", "data", "content", "message", "theme", "harness", "limit", "port", "db", "run", "state", "conflict", "request-id", "fields", "output", "directory", "choice", "purpose", "executable", "project-root"] as const;
 const options = Object.fromEntries(stringOptions.map(name => [name, { type: "string" as const }]));
-type Flags = Record<string, string | boolean | undefined>;
-function flag(flags: Flags, name: string): string | undefined { const value = flags[name]; return typeof value === "string" ? value : undefined; }
-function required(value: string | undefined, label: string): string { if (!value) throw new ClientError("usage", `${label} is required. Run --help for usage.`); return value; }
-async function file(path: string): Promise<string> { return path === "-" ? await Bun.stdin.text() : await Bun.file(path).text(); }
-async function jsonFile(path: string): Promise<Record<string, unknown>> {
-  const value: unknown = JSON.parse(await file(path));
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new ClientError("usage", "JSON input must be an object");
-  return value as Record<string, unknown>;
-}
-function query(flags: Flags): string {
-  const params = new URLSearchParams();
-  for (const [option, key] of [["project", "projectId"], ["task", "taskId"], ["limit", "limit"]]) if (flag(flags, option!)) params.set(key!, flag(flags, option!)!);
-  return params.size ? `?${params}` : "";
-}
-function print(value: unknown, json: boolean): void {
-  if (json) { console.log(JSON.stringify({ data: value })); return; }
-  if (Array.isArray(value)) {
-    if (!value.length) { console.log("No records."); return; }
-    for (const item of value) console.log([item.id ?? item.sha ?? "", item.name ?? item.title ?? item.message ?? "", item.status ?? item.kind ?? ""].join("  ").replace(/[\x00-\x1f\x7f]/g, " "));
-  } else console.log(JSON.stringify(value, null, 2));
-}
 const resourceNames: Record<string, string> = { project: "projects", projects: "projects", task: "tasks", tasks: "tasks", doc: "documents", docs: "documents", document: "documents", documents: "documents", tour: "documents", tours: "documents" };
 const resourceFlags: Record<string, Record<string, readonly string[]>> = {
   projects: {
@@ -81,9 +125,7 @@ const resourceFlags: Record<string, Record<string, readonly string[]>> = {
 };
 function validateResourceFlags(group: string, action: string, flags: Flags): void {
   const allowed = resourceFlags[resourceNames[group]!]?.[action] ?? [];
-  for (const name of Object.keys(flags)) {
-    if (name !== "url" && name !== "json" && !allowed.includes(name)) throw new ClientError("usage", `--${name} is not valid for ${group} ${action}`);
-  }
+  validateFlags(`${group} ${action}`, flags, allowed);
 }
 async function resourceBody(group: string, action: string, positional: string | undefined, flags: Flags): Promise<Record<string, unknown>> {
   const body = flag(flags, "data") ? await jsonFile(flag(flags, "data")!) : {};
@@ -154,6 +196,11 @@ async function serve(flags: Flags): Promise<void> {
 }
 async function command(client: Client, args: string[], flags: Flags): Promise<unknown> {
   const [group = "status", ...rest] = args;
+  if (group === "factory") return factoryCommand(client, rest, flags);
+  if (group === "run" || group === "runs") return runCommand(client, rest, flags);
+  if (group === "question" || group === "questions") return questionCommand(client, rest, flags);
+  if (group === "integration" || group === "integrations") return integrationCommand(client, rest, flags);
+  if (group === "harnesses" || group === "targets") return availabilityCommand(client, group, rest, flags);
   if (resourceNames[group]) validateResourceFlags(group, rest[0] ?? "list", flags);
   if (group === "stats" && flag(flags, "task") !== undefined) throw new ClientError("usage", "stats supports --project, not --task");
   const meta = await client.connect();
@@ -161,15 +208,14 @@ async function command(client: Client, args: string[], flags: Flags): Promise<un
   if (resourceNames[group]) return resourceCommand(client, group, rest, flags);
   if (["config", "settings", "workspace"].includes(group)) return settingCommand(client, group, rest, flags);
   if (group === "intervention" || group === "interventions") return interventionCommand(client, rest, flags);
-  if (["activity", "stats", "harnesses", "templates", "targets"].includes(group)) {
-    const value = await client.request<unknown>("GET", `/v1/${group === "targets" ? "execution-targets" : group}${query(flags)}`);
+  if (["activity", "stats", "templates"].includes(group)) {
+    const value = await client.request<unknown>("GET", `/v1/${group}${query(flags)}`);
     if (group === "templates" && rest[0] === "show") {
       const selected = (value as { id: string }[]).find(item => item.id === required(rest[1], "ID"));
       if (!selected) throw new ClientError("not_found", "Template was not found"); return selected;
     }
     return value;
   }
-  if (group === "run") return client.request("POST", `/v1/tasks/${encodeURIComponent(required(rest[0], "TASK"))}/run`, {});
   if (group === "demo" && rest[0] === "seed") return seedDemo(client);
   if (group === "api") {
     const method = required(rest[0], "METHOD").toUpperCase(), path = required(rest[1], "PATH");
@@ -181,7 +227,7 @@ async function command(client: Client, args: string[], flags: Flags): Promise<un
 }
 let json = process.argv.includes("--json");
 try {
-  const parsed = parseArgs({ args: process.argv.slice(2), options: { ...options, json: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean" } }, allowPositionals: true, strict: true });
+  const parsed = parseArgs({ args: process.argv.slice(2), options: { ...options, json: { type: "boolean" }, check: { type: "boolean" }, "create-missing": { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean" } }, allowPositionals: true, strict: true });
   const flags: Flags = parsed.values; json = flags.json === true;
   if (flags.help) console.log(HELP);
   else if (flags.version) print({ version: manifest.version }, json);
@@ -189,6 +235,8 @@ try {
   else print(await command(new Client(flag(flags, "url")), parsed.positionals, flags), json);
 } catch (error) {
   const code = error instanceof ClientError ? error.code : "error", message = error instanceof Error ? error.message : String(error);
-  if (json) console.log(JSON.stringify({ error: { code, message } })); else console.error(`Karabiner: ${message}`);
+  const details = error instanceof ClientError ? error.details : undefined;
+  if (json) console.log(JSON.stringify({ error: { code, message, ...(details === undefined ? {} : { details }) } }));
+  else { console.error(`Karabiner: ${message}`); if (details !== undefined) console.error(JSON.stringify(details, null, 2)); }
   process.exitCode = 1;
 }

@@ -2,6 +2,7 @@
 //! (Board / List / Workflow / Settings).
 
 mod documents_menu;
+mod integration;
 mod settings;
 
 use gpui_kit::component::{
@@ -21,7 +22,7 @@ use crate::{
     views::{
         docs::{DocTemplate, TEMPLATES, create_document},
         tasks::{Grouping, Layout, TaskCollection, ui::{self, Load}},
-        workflow::{config::ConfigDraft, editor::WorkflowEditor},
+        workflow::{config::ConfigDraft, factory::FactoryPane},
     },
 };
 use settings::ProjectSettings;
@@ -182,7 +183,7 @@ pub struct ProjectView {
     pane: ProjectPane,
     tasks: Entity<TaskCollection>,
     config: Entity<ConfigDraft>,
-    workflow: Entity<WorkflowEditor>,
+    workflow: Entity<FactoryPane>,
     settings: Entity<ProjectSettings>,
     _load: Option<gpui_kit::Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -192,7 +193,7 @@ impl ProjectView {
     fn new(state: AppState, project_id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tasks = cx.new(|cx| TaskCollection::new(state.clone(), project_id.clone(), window, cx));
         let config = cx.new(|cx| ConfigDraft::new(state.clone(), project_id.clone(), cx));
-        let workflow = cx.new(|cx| WorkflowEditor::new(config.clone(), window, cx));
+        let workflow = cx.new(|cx| FactoryPane::new(state.clone(), project_id.clone(), config.clone(), window, cx));
         let settings = cx.new(|cx| ProjectSettings::new(state.clone(), project_id.clone(), config.clone(), window, cx));
         let mut seen = state.service.read(cx).data_version();
         let subscriptions = vec![
@@ -381,8 +382,10 @@ impl Render for ProjectView {
         } else {
             Vec::new()
         };
+        // The factory canvas takes the whole pane; the project header returns on other panes.
+        let header = (self.pane != ProjectPane::Workflow).then(|| self.render_header(&project, cx));
         div().relative().size_full().flex().flex_col()
-            .child(self.render_header(&project, cx))
+            .children(header)
             .child(self.render_toolbar(cx))
             .child(div().flex_1().min_h_0().child(content))
             .when(config_bar, |this| {

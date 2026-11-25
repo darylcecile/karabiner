@@ -1,0 +1,13 @@
+{
+  "checks": {
+    "factory-integrations": {
+      "command": "bun .groundwork/scripts/factory-integrations.ts",
+      "expect": "Injected catalogs/pulls preserve named mappings, refresh exclusion and write receipts; local target processes prove config-path dry-run readiness, context/resource validation and distinct owned cleanup",
+      "kind": "workflow",
+      "paths": ["packages/contracts/src/factory-types.ts", "packages/service/src/integrations/**", "packages/service/src/runtime/targets.ts", "packages/service/src/runtime/process.ts", ".groundwork/scripts/factory-integrations.ts", ".groundwork/scripts/fixtures/target-executable.ts"],
+      "artifacts": ["factory-integrations.json"],
+      "result": "result.json",
+      "context": { "fixture": "injected-connectors-and-targets", "externalWrites": false, "actualContainment": false }
+    }
+  }
+}

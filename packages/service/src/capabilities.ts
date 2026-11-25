@@ -1,20 +1,103 @@
-import { API_VERSION, type ExecutionTargetInfo, type HarnessInfo, type ServiceMeta } from "@karabiner/contracts";
+import {
+	API_VERSION,
+	type HarnessInfo,
+	type ServiceMeta,
+	type ProjectConfig,
+} from "@karabiner/contracts";
 import manifest from "../package.json";
+import { targetStatus } from "./runtime/targets.ts";
 
+/** Capability flags describe implemented operations; availability is observed per adapter. */
 export const metadata: ServiceMeta = {
-  apiVersion: API_VERSION, serviceVersion: manifest.version,
-  capabilities: { storage: true, configuration: true, documents: true, codeTours: true, interventionIntents: true, activity: true, statistics: true, events: true,
-    scheduler: false, harnessExecution: false, integrations: false, virtualMachines: false },
+	apiVersion: API_VERSION,
+	serviceVersion: manifest.version,
+	capabilities: {
+		storage: true,
+		configuration: true,
+		documents: true,
+		codeTours: true,
+		interventionIntents: true,
+		activity: true,
+		statistics: true,
+		events: true,
+		scheduler: true,
+		harnessExecution: true,
+		integrations: true,
+		virtualMachines: true,
+		factoryCompilation: true,
+		runControls: true,
+		parallelExecution: true,
+		stepRetries: true,
+		interactiveControl: true,
+		integrationCatalog: true,
+		integrationRefresh: true,
+		targetReadiness: true,
+		strandsConfiguration: true,
+		strandsReadiness: true,
+		harnessReadiness: true,
+	},
 };
-export const harnesses: HarnessInfo[] = [
-  { id: "claude", name: "Claude Code", executable: "claude" },
-  { id: "codex", name: "Codex", executable: "codex" },
-  { id: "copilot", name: "GitHub Copilot", executable: "copilot" },
-  { id: "custom", name: "Custom local harness", executable: "" },
-].map(item => ({ ...item, installed: null, authenticated: null, status: "not_checked", executionAvailable: false,
-  message: "Local installation and authentication have not been checked. Connect a harness adapter to enable execution." } as HarnessInfo));
-export const executionTargets: ExecutionTargetInfo[] = [
-  { id: "host", name: "This Mac", kind: "host", available: false, requirements: "An installed, authenticated harness", message: "Host executor is not implemented." },
-  { id: "mxc", name: "MXC Seatbelt", kind: "process_sandbox", available: false, requirements: "macOS 15+; MXC runtime", message: "Process sandbox adapter is not implemented. This is not a VM." },
-  { id: "apple-container", name: "Apple Container", kind: "virtual_machine", available: false, requirements: "Apple silicon; macOS 26+; container CLI/service", message: "Linux VM adapter is not implemented." },
-];
+
+export function harnesses(): HarnessInfo[] {
+	const checkedAt = new Date().toISOString();
+
+	const commands = [
+		{ id: "claude" as const, name: "Claude Code", executable: "claude" },
+		{ id: "codex" as const, name: "Codex", executable: "codex" },
+		{ id: "copilot" as const, name: "GitHub Copilot", executable: "copilot" },
+	];
+
+	return [
+		...commands.map((item): HarnessInfo => {
+			const installed = Bun.which(item.executable) !== null;
+
+			return {
+				...item,
+				installed,
+				authenticated: null,
+				checkedAt,
+				executionAvailable: installed,
+				status: installed ? "available" : "unavailable",
+				message: installed
+					? "Executable found on PATH. Uses its existing account; authentication and model access are checked when running."
+					: "Executable not found on the service's PATH.",
+			};
+		}),
+		{
+			id: "custom",
+			name: "Custom local harness",
+			executable: "",
+			installed: null,
+			authenticated: null,
+			checkedAt,
+			status: "not_checked",
+			executionAvailable: true,
+			message:
+				"Configure an explicit executable and arguments on the agent. Availability is checked on launch.",
+		},
+		{
+			id: "strands",
+			name: "Strands",
+			executable: "",
+			installed: true,
+			authenticated: null,
+			checkedAt,
+			status: "available",
+			executionAvailable: true,
+			message:
+				"Built-in Strands harness; provider credentials and model access are supplied by the service environment and checked on invocation.",
+		},
+	];
+}
+
+export function executionTargets(config?: ProjectConfig, check = false) {
+	return Promise.all(
+		(["host", "mxc", "apple-container"] as const).map((target) =>
+			targetStatus(
+				target,
+				config?.executionTarget === target ? config.targetOptions : undefined,
+				check,
+			),
+		),
+	);
+}

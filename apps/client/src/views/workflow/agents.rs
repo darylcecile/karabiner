@@ -1,6 +1,7 @@
 //! Project-level configuration editors: agents (harness, model, mode, executable),
 //! instruction and skill libraries, and the execution environment choice. All edit the
-//! shared `ConfigDraft`; nothing here starts a process or validates credentials.
+//! shared `ConfigDraft`; nothing here starts a process or stores credentials (Strands names
+//! an environment variable).
 
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName,
@@ -11,7 +12,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use protocol::{
-    AgentDefinition, AgentMode, ExecutionTarget, ExecutionTargetInfo, HarnessId, HarnessInfo,
+    AgentDefinition, AgentMode, StrandsModelConfig, ExecutionTarget, ExecutionTargetInfo, HarnessId, HarnessInfo,
     InstructionDefinition, ProjectConfig, SkillDefinition,
 };
 
@@ -27,7 +28,14 @@ type Binding<'a, T> = (&'a Entity<InputState>, fn(&mut T, String));
 // ---- Agents --------------------------------------------------------------------------
 
 pub struct AgentsEditor {
+    state: crate::state::AppState,
     config: Entity<ConfigDraft>,
+    /// General's Local checkout as shown (saved or edited). The harness check is global, so
+    /// the service can only resolve relative executables against a root sent with it.
+    checkout: Option<String>,
+    /// Last readiness check (agent id, result).
+    readiness: Option<(String, Result<protocol::HarnessReadiness, String>)>,
+    _check: Option<gpui_kit::Task<()>>,
     harnesses: Vec<HarnessInfo>,
     /// `AppSettings.defaultHarness`, used for new agents once loaded.
     default_harness: Option<HarnessId>,
@@ -36,6 +44,9 @@ pub struct AgentsEditor {
     role: Entity<InputState>,
     model: Entity<InputState>,
     executable: Entity<InputState>,
+    credential_env: Entity<InputState>,
+    base_url: Entity<InputState>,
+    region: Entity<InputState>,
     /// One input per argument so `[]` and `[""]` stay distinct and spaces are exact.
     arg_inputs: Vec<Entity<InputState>>,
     _arg_subscriptions: Vec<Subscription>,
@@ -45,7 +56,7 @@ pub struct AgentsEditor {
 }
 
 impl AgentsEditor {
-    pub fn new(config: Entity<ConfigDraft>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: crate::state::AppState, config: Entity<ConfigDraft>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
@@ -53,19 +64,26 @@ impl AgentsEditor {
         let role = input("Role, e.g. implementer or reviewer", window, cx);
         let model = input("Model id, e.g. claude-sonnet-4.5", window, cx);
         let executable = input("/usr/local/bin/my-agent", window, cx);
+        let credential_env = input("e.g. ANTHROPIC_API_KEY", window, cx);
+        let base_url = input("Optional, e.g. http://localhost:11434", window, cx);
+        let region = input("e.g. us-east-1", window, cx);
         let instructions = cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 10).placeholder("System instructions for this agent"));
         let mut subscriptions = vec![cx.observe_in(&config, window, |this, _, window, cx| { this.sync(window, cx); cx.notify() })];
-        let bindings: [Binding<AgentDefinition>; 4] = [
+        let bindings: [Binding<AgentDefinition>; 7] = [
+            (&credential_env, |agent, value| if let Some(config) = agent.strands.as_mut() { config.credential_env = (!value.trim().is_empty()).then(|| value.trim().to_string()) }),
+            (&base_url, |agent, value| if let Some(config) = agent.strands.as_mut() { config.base_url = (!value.trim().is_empty()).then(|| value.trim().to_string()) }),
+            (&region, |agent, value| if let Some(config) = agent.strands.as_mut() { config.region = (!value.trim().is_empty()).then(|| value.trim().to_string()) }),
             (&name, |agent, value| agent.name = value),
             (&role, |agent, value| agent.role = value),
             (&model, |agent, value| agent.model = value),
             (&executable, |agent, value| agent.executable = Some((!value.trim().is_empty()).then_some(value))),
         ];
-        for (input, apply) in bindings {
+        for (field, (input, apply)) in bindings.into_iter().enumerate() {
             subscriptions.push(cx.subscribe_in(input, window, move |this, input, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     let value = input.read(cx).value().to_string();
-                    this.edit(cx, |agent| apply(agent, value));
+                    // Typing in one field is one undo step.
+                    this.edit_in(Some(field), cx, |agent| apply(agent, value));
                 }
             }));
         }
@@ -75,7 +93,7 @@ impl AgentsEditor {
                 this.edit(cx, |agent| agent.instructions = value);
             }
         }));
-        let mut this = Self { config, harnesses: Vec::new(), default_harness: None, selected: None, name, role, model, executable, arg_inputs: Vec::new(), _arg_subscriptions: Vec::new(), instructions, syncing: false, _subscriptions: subscriptions };
+        let mut this = Self { state, config, checkout: None, readiness: None, _check: None, harnesses: Vec::new(), default_harness: None, selected: None, name, role, model, executable, credential_env, base_url, region, arg_inputs: Vec::new(), _arg_subscriptions: Vec::new(), instructions, syncing: false, _subscriptions: subscriptions };
         this.sync(window, cx);
         this
     }
@@ -101,6 +119,9 @@ impl AgentsEditor {
             (&self.role, text(|a| a.role.clone())),
             (&self.model, text(|a| a.model.clone())),
             (&self.executable, text(|a| a.executable.clone().flatten().unwrap_or_default())),
+            (&self.credential_env, text(|a| a.strands.as_ref().and_then(|s| s.credential_env.clone()).unwrap_or_default())),
+            (&self.base_url, text(|a| a.strands.as_ref().and_then(|s| s.base_url.clone()).unwrap_or_default())),
+            (&self.region, text(|a| a.strands.as_ref().and_then(|s| s.region.clone()).unwrap_or_default())),
         ] {
             if input.read(cx).value().as_ref() != value {
                 input.update(cx, |input, cx| input.set_value(value.as_str(), window, cx));
@@ -146,11 +167,17 @@ impl AgentsEditor {
     }
 
     fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut AgentDefinition)) {
+        self.edit_in(None, cx, f);
+    }
+
+    fn edit_in(&mut self, field: Option<usize>, cx: &mut Context<Self>, f: impl FnOnce(&mut AgentDefinition)) {
         let Some(index) = self.selected else { return };
         if self.syncing { return }
-        self.config.update(cx, |config, cx| config.edit(cx, |config| {
-            if let Some(agent) = config.agents.get_mut(index) { f(agent) }
-        }));
+        let apply = move |config: &mut ProjectConfig| if let Some(agent) = config.agents.get_mut(index) { f(agent) };
+        self.config.update(cx, |config, cx| match field {
+            Some(field) => config.edit_grouped(format!("agent:{index}:{field}"), cx, apply),
+            None => config.edit(cx, apply),
+        });
     }
 
     fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -168,6 +195,9 @@ impl AgentsEditor {
                 mode: AgentMode::Interactive,
                 executable: None,
                 args: None,
+                instruction_ids: None,
+                protocol: None,
+                strands: None,
                 extra: Default::default(),
             });
             index = Some(config.agents.len() - 1);
@@ -221,19 +251,34 @@ impl AgentsEditor {
             ui::chip(format!("{} (unsupported here)", agent.mode.as_str()), cx).into_any_element()
         };
         let custom = agent.harness == HarnessId::Custom;
-        // Inspector panel (ref B6BD5981): section fill, R12, 16 padding, fields stacked.
-        components::section_card(cx).py_4().gap_4()
+        let strands = agent.harness == HarnessId::Strands;
+        // Plain groups separated by section titles; each field keeps its own (only) border.
+        div().flex().flex_col().gap_4()
             .child(div().flex().items_center().justify_between()
-                .child(div().t_label().font_weight(FontWeight::SEMIBOLD).text_color(theme_tokens::tokens(cx).text).child("Agent"))
+                .child(div().t_body().font_weight(FontWeight::SEMIBOLD).text_color(theme_tokens::tokens(cx).text).child("Agent"))
                 .child(components::button_sm(Button::new("remove-agent").ghost().icon(gpui_kit::assets::IconName::Trash).label("Remove"))
                     .on_click(cx.listener(|this, _, window, cx| this.remove(window, cx)))))
             .child(div().flex().flex_wrap().gap_3()
                 .child(div().flex_1().min_w(px(160.)).child(ui::field("Name", components::input_md(Input::new(&self.name)), cx)))
                 .child(div().flex_1().min_w(px(160.)).child(ui::field("Role", components::input_md(Input::new(&self.role)), cx))))
+            .child(components::form_section("Harness", None, cx).pt_2().border_t_1().border_color(theme_tokens::tokens(cx).border))
             .child(div().flex().flex_wrap().gap_3()
                 .child(div().flex_1().min_w(px(160.)).child(ui::field("Harness", harness_control, cx)))
                 .child(div().flex_1().min_w(px(160.)).child(ui::field("Model", components::input_md(Input::new(&self.model)), cx))))
             .children(self.harness_note(&agent.harness).map(|note| div().t_caption().text_color(cx.theme().muted_foreground).child(note)))
+            .child(div().t_caption().text_color(cx.theme().muted_foreground).child(auth_note(&agent.harness)))
+            .when(strands, |this| this.child(if self.state.service.read(cx).capabilities().strands_configuration || agent.strands.is_some() {
+                self.render_strands(agent, cx).into_any_element()
+            } else {
+                ui::update_service_note("choose a Strands model provider", cx).into_any_element()
+            }))
+            .child(self.render_check(agent, cx))
+            .when(custom, |this| this.child(ui::field("Protocol", ui::segmented("agent-protocol",
+                &[("jsonl-v1".to_string(), "Line-based (default)"), ("jsonrpc-v2".to_string(), "JSON-RPC v2")],
+                agent.protocol.clone().unwrap_or_else(|| "jsonl-v1".into()), {
+                    let weak = cx.weak_entity();
+                    move |protocol, _, cx| { weak.update(cx, |this, cx| this.edit(cx, |agent| agent.protocol = (protocol != "jsonl-v1").then_some(protocol))).ok(); }
+                }, cx), cx)))
             .when(custom, |this| this.child(div().flex().flex_wrap().gap_3()
                 .child(div().flex_1().min_w(px(160.)).child(ui::field("Executable", components::input_md(Input::new(&self.executable)), cx)))
                 .child(div().flex_1().min_w(px(160.)).child(ui::field("Arguments", div().flex().flex_col().gap_1()
@@ -245,6 +290,7 @@ impl AgentsEditor {
                     }))
                     .child(div().flex().child(components::button_sm(Button::new("add-arg").ghost().icon(IconName::Plus).label("Add argument"))
                         .on_click(cx.listener(|this, _, _, cx| this.edit_args(cx, |args| args.push(String::new())))))), cx)))))
+            .child(components::form_section("Behavior", None, cx).pt_2().border_t_1().border_color(theme_tokens::tokens(cx).border))
             .child(ui::field("Mode", mode_control, cx))
             .child(ui::field("Skills", div().flex().flex_col().gap_1()
                 .when(config.skills.is_empty(), |this| this.child(div().t_caption().text_color(cx.theme().muted_foreground).child("No skills in this project yet.")))
@@ -264,8 +310,116 @@ impl AgentsEditor {
                         }))
                 })), cx))
             .child(ui::field("Instructions", components::textarea_box(&self.instructions, cx), cx))
-            .child(div().t_caption().text_color(cx.theme().muted_foreground)
-                .child("Saved as configuration only. Agents run once harness execution is available."))
+    }
+
+    /// Checks the agent as drafted: install, sign-in (known harnesses only; custom programs are
+    /// never run) and, for Strands, whether the credential variable is set. No model calls.
+    pub fn set_checkout(&mut self, root: Option<String>) {
+        self.checkout = root;
+    }
+
+    fn check_agent(&mut self, agent: AgentDefinition, cx: &mut Context<Self>) {
+        let api = self.state.api.clone();
+        let id = agent.id.clone();
+        // Always the current checkout; with none, sign-in is still checked and the service reports
+        // a relative executable it can't resolve.
+        let project_root = self.checkout.clone();
+        self.readiness = None;
+        cx.notify();
+        self._check = Some(cx.spawn(async move |this, cx| {
+            let body = protocol::CheckHarness { agent: &agent, check: true, project_root };
+            let result = api.post::<_, protocol::HarnessReadiness>("/v1/harnesses/check", &body).await.map_err(|error| {
+                if error.is_not_found() { "This service can't check agents yet. Update Karabiner's service to check them here.".to_string() } else { ui::service_message(&error) }
+            });
+            this.update(cx, |this, cx| { this.readiness = Some((id, result)); cx.notify() }).ok();
+        }));
+    }
+
+    fn render_check(&self, agent: &AgentDefinition, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let result = self.readiness.as_ref().filter(|(id, _)| *id == agent.id).map(|(_, result)| result.clone());
+        let muted = cx.theme().muted_foreground;
+        let yes_no = |value: Option<bool>, yes: &'static str, no: &'static str, unknown: &'static str| match value { Some(true) => yes, Some(false) => no, None => unknown };
+        let checked = agent.clone();
+        let body = result.map(|result| match result {
+            Err(error) => div().t_caption().text_color(muted).child(error).into_any_element(),
+            Ok(readiness) => {
+                let chip = if readiness.execution_available { components::status_pill("Ready", components::Tone::Success, cx).into_any_element() } else { ui::amber_chip("Not ready", cx).into_any_element() };
+                let fix = match readiness.code.as_deref() {
+                    Some("credential_env_missing" | "credential_missing") => " Set it in the environment the service starts with, then restart the service.",
+                    _ => "",
+                };
+                let support = readiness.supported.map(|support| super::join_parts(&[
+                    if support.permissions { "asks permission in the app" } else { "no in-app permission prompts" },
+                    if support.questions { "can ask questions" } else { "" },
+                    match support.steering.as_str() { "native-turn" => "takes live guidance", "native-tool-boundary" => "takes guidance at tool calls", _ => "takes guidance between steps" },
+                ]));
+                div().flex().flex_col().gap_1()
+                    .child(div().flex().items_center().gap_2().child(chip)
+                        .child(div().t_caption().text_color(muted).child(super::join_parts(&[
+                            yes_no(readiness.installed, "installed", "not installed", "install not checked"),
+                            yes_no(readiness.authenticated, "signed in", "signed out", "sign-in unknown"),
+                        ]))))
+                    .child(div().t_caption().text_color(muted).child(format!("{}{fix}", readiness.message)))
+                    .children(support.map(|support| div().t_caption().text_color(muted).child(format!("While running: {support}."))))
+                    .children(readiness.checks.into_iter().filter(|check| check.status != "passed").map(move |check| div().t_caption().text_color(muted).child(check.message)))
+                    .into_any_element()
+            }
+        });
+        if !self.state.service.read(cx).capabilities().harness_readiness {
+            return div().flex().flex_col().gap_2().child(ui::update_service_note("check this agent's install and sign-in", cx));
+        }
+        div().flex().flex_col().gap_2()
+            .child(div().flex().child(components::button_sm(Button::new("agent-check").outline().label("Check readiness"))
+                .on_click(cx.listener(move |this, _, _, cx| this.check_agent(checked.clone(), cx)))))
+            .children(body)
+    }
+
+    /// Strands model provider and how it finds credentials (a variable name, never a key).
+    fn render_strands(&self, agent: &AgentDefinition, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        const PROVIDERS: [(&str, &str); 6] = [("bedrock", "Amazon Bedrock"), ("anthropic", "Anthropic"), ("openai", "OpenAI"), ("google", "Google"), ("ollama", "Ollama"), ("litellm", "LiteLLM")];
+        let provider = agent.strands.as_ref().map(|config| config.provider.clone());
+        let label = provider.as_ref().map_or("Choose provider".to_string(), |id| PROVIDERS.iter().find(|(value, _)| value == id).map_or(id.clone(), |(_, name)| name.to_string()));
+        let weak = cx.weak_entity();
+        let picker = components::button_md(Button::new("strands-provider").outline().label(label).dropdown_caret(true)).dropdown_menu(move |mut menu, _, _| {
+            for (value, name) in PROVIDERS {
+                let weak = weak.clone();
+                menu = menu.item(PopupMenuItem::new(name).on_click(move |_, _, cx| {
+                    weak.update(cx, |this, cx| this.edit(cx, |agent| match agent.strands.as_mut() {
+                        Some(config) => config.provider = value.into(),
+                        None => agent.strands = Some(StrandsModelConfig { provider: value.into(), credential_env: None, base_url: None, region: None, api: None, extra: Default::default() }),
+                    })).ok();
+                }));
+            }
+            menu
+        });
+        let provider = provider.unwrap_or_default();
+        let weak = cx.weak_entity();
+        div().flex().flex_col().gap_3()
+            .child(ui::field("Model provider", div().flex().child(picker), cx))
+            .when(!provider.is_empty(), |this| this
+                .when(provider != "ollama", |this| this.child(ui::field("Credential variable", components::input_md(Input::new(&self.credential_env)), cx))
+                    .child(div().t_caption().text_color(cx.theme().muted_foreground).child(if provider == "bedrock" {
+                        "Optional. Leave empty to use the service's AWS profile or role."
+                    } else {
+                        "Name of the environment variable the service reads. The key itself is never stored."
+                    })))
+                .when(provider == "bedrock", |this| this.child(ui::field("Region", components::input_md(Input::new(&self.region)), cx)))
+                .when(matches!(provider.as_str(), "openai" | "ollama" | "litellm"), |this| this.child(ui::field("Base URL", components::input_md(Input::new(&self.base_url)), cx)))
+                .when(provider == "openai", |this| this.child(ui::field("API", ui::segmented("strands-api", &[("chat".to_string(), "Chat"), ("responses".to_string(), "Responses")],
+                    agent.strands.as_ref().and_then(|config| config.api.clone()).unwrap_or_else(|| "chat".into()),
+                    move |api, _, cx| { weak.update(cx, |this, cx| this.edit(cx, |agent| if let Some(config) = agent.strands.as_mut() { config.api = Some(api) })).ok(); }, cx), cx))))
+    }
+}
+
+/// How each harness authenticates; Karabiner never stores harness credentials.
+fn auth_note(harness: &HarnessId) -> &'static str {
+    match harness {
+        HarnessId::Claude => "Uses Claude Code's own sign-in on this Mac (run `claude` once to log in).",
+        HarnessId::Codex => "Uses Codex's own sign-in on this Mac (`codex login`).",
+        HarnessId::Copilot => "Uses the Copilot CLI's GitHub sign-in on this Mac.",
+        HarnessId::Strands => "Runs in the service with the model provider below.",
+        HarnessId::Custom => "Your executable handles its own credentials.",
+        HarnessId::Unknown(_) => "",
     }
 }
 
@@ -456,7 +610,7 @@ impl Render for LibraryEditor {
             // 360 is the wrapping basis (the form drops under the list below it); alone on its
             // line the form shrinks to the pane (e.g. ~302 with a 360 sidebar at 720).
             .child(div().flex_1().flex_basis(px(360.)).min_w_0().child(if self.selected.is_some() {
-                components::section_card(cx).py_4().gap_4()
+                div().flex().flex_col().gap_4()
                     .child(div().flex().justify_end().child(components::button_sm(Button::new("remove-library").ghost().icon(gpui_kit::assets::IconName::Trash).label("Remove"))
                         .on_click(cx.listener(|this, _, window, cx| this.remove(window, cx)))))
                     .child(ui::field("Name", components::input_md(Input::new(&self.name)), cx))
@@ -486,40 +640,73 @@ pub fn list_item(id: impl Into<ElementId>, selected: bool, title: &str, meta: &s
 
 // ---- Environment ---------------------------------------------------------------------
 
-/// Execution environment picker: host, MXC (Seatbelt) or Apple container, with the
-/// service's availability report. Selection is configuration only.
+/// Execution environment choice as a radio list, one full-width row per target: title,
+/// availability on its own line (wraps, never overflows), then what it is. The service's
+/// availability report is shown as reported. Selection is configuration only.
 pub fn environment_picker(
     config: &Entity<ConfigDraft>,
     targets: &Load<Vec<ExecutionTargetInfo>>,
     cx: &App,
 ) -> impl IntoElement + use<> {
+    let t = theme_tokens::tokens(cx);
     let current = config.read(cx).config().map(|config| config.execution_target.clone());
     let unknown = current.as_ref().filter(|target| !target.is_known()).cloned();
     let report = |target: &ExecutionTarget| targets.ready().and_then(|list| list.iter().find(|info| &info.id == target)).cloned();
-    div().flex().flex_col().gap_2()
-        .children(unknown.map(|target| ui::amber_chip(format!("Current target \"{}\" comes from a newer version and is kept unless you pick another.", target.as_str()), cx)))
-        .child(div().flex().flex_wrap().gap_2().children(ExecutionTarget::ALL.iter().map(|target| {
+    components::form_rows(cx)
+        .children(unknown.map(|target| components::form_block(ui::amber_chip(format!("Current target \"{}\" comes from a newer version and is kept unless you pick another.", target.as_str()), cx), cx)))
+        .children(ExecutionTarget::ALL.iter().map(|target| {
             let selected = current.as_ref() == Some(target);
             let info = report(target);
             let config = config.downgrade();
             let value = target.clone();
-            let availability = match &info {
-                Some(info) if info.available => ui::chip("Available", cx).into_any_element(),
-                Some(_) => ui::amber_chip("Not available here", cx).into_any_element(),
-                None => ui::chip("Not checked", cx).into_any_element(),
+            let (availability, tone) = match &info {
+                Some(info) if info.available => ("Available".to_string(), t.success),
+                Some(info) => (if info.message.is_empty() { format!("Not available here. Requires: {}", info.requirements) } else { format!("Not available here. {}", info.message) }, t.attention),
+                None => ("Not checked".to_string(), t.text_secondary),
             };
-            ui::choice_card(SharedString::from(format!("target-{}", target.as_str())), selected, false, cx)
-                .flex_1().flex_basis(px(220.)).min_w(px(200.)).flex().flex_col().gap_1p5()
+            div().id(SharedString::from(format!("target-{}", target.as_str()))).flex().items_start().gap_3().py_3().px_2()
+                .border_b_1().border_color(t.border).cursor_pointer().hover(move |style| style.bg(t.hover))
                 .on_click(move |_, _, cx| {
                     let value = value.clone();
                     config.update(cx, |config, cx| config.edit(cx, |config| config.execution_target = value)).ok();
                 })
-                .child(div().flex().items_center().gap_2()
-                    .child(Icon::new(match target { ExecutionTarget::Host => IconName::SquareTerminal, ExecutionTarget::Mxc => IconName::Cpu, _ => IconName::HardDrive }).size(px(16.)))
-                    .child(div().t_label().font_weight(FontWeight::MEDIUM).child(ui::target_label(target)))
-                    .child(div().ml_auto().child(availability)))
-                .child(div().t_caption().text_color(cx.theme().muted_foreground).child(ui::target_detail(target)))
-                .children(info.map(|info| div().t_caption().text_color(cx.theme().muted_foreground)
-                    .child(if info.message.is_empty() { format!("Requires: {}", info.requirements) } else { info.message })))
+                // Radio mark: ring, filled when selected.
+                .child(div().mt(px(3.)).size(px(14.)).flex_none().rounded_full().border_1()
+                    .border_color(if selected { t.accent_fill } else { t.text_tertiary })
+                    .flex().items_center().justify_center()
+                    .when(selected, |this| this.child(div().size(px(6.)).rounded_full().bg(t.accent_fill))))
+                .child(Icon::new(match target { ExecutionTarget::Host => IconName::SquareTerminal, ExecutionTarget::Mxc => IconName::Cpu, _ => IconName::HardDrive })
+                    .size(px(16.)).text_color(t.text_secondary).mt(px(1.)))
+                .child(div().flex_1().min_w_0().flex().flex_col().gap_0p5()
+                    .child(div().t_body().font_weight(FontWeight::MEDIUM).text_color(t.text).truncate().child(ui::target_label(target)))
+                    .child(div().t_caption().text_color(t.text_secondary).child(ui::target_detail(target)))
+                    .child(div().t_caption().text_color(tone).child(availability)))
+        }))
+}
+
+/// Compact form for narrow panels (the workflow inspector): a dropdown of targets and the
+/// chosen one's availability underneath.
+pub fn environment_dropdown(
+    config: &Entity<ConfigDraft>,
+    targets: &Load<Vec<ExecutionTargetInfo>>,
+    cx: &App,
+) -> impl IntoElement + use<> {
+    let t = theme_tokens::tokens(cx);
+    let current = config.read(cx).config().map(|config| config.execution_target.clone());
+    let label = current.as_ref().map_or("Choose".to_string(), |target| ui::target_label(target).to_string());
+    let info = current.as_ref().and_then(|target| targets.ready().and_then(|list| list.iter().find(|info| &info.id == target)).cloned());
+    let weak = config.downgrade();
+    div().flex().flex_col().gap_1()
+        .child(div().flex().child(components::button_sm(Button::new("env-target").outline().label(label).dropdown_caret(true)).dropdown_menu(move |mut menu, _, _| {
+            for target in ExecutionTarget::ALL.iter() {
+                let (weak, value) = (weak.clone(), target.clone());
+                menu = menu.item(PopupMenuItem::new(ui::target_label(target)).on_click(move |_, _, cx| {
+                    let value = value.clone();
+                    weak.update(cx, |config, cx| config.edit(cx, |config| config.execution_target = value)).ok();
+                }));
+            }
+            menu
         })))
+        .children(info.map(|info| div().t_caption().text_color(if info.available { t.text_secondary } else { t.attention })
+            .child(if info.available { "Available".to_string() } else if info.message.is_empty() { format!("Not available here. Requires: {}", info.requirements) } else { format!("Not available here. {}", info.message) })))
 }

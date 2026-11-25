@@ -1,11 +1,16 @@
 //! Shared draft of one project's configuration (`GET|PUT /v1/projects/:id/config`).
 //! The Workflow and Settings tabs edit the same draft; saving sends the whole object with
 //! the base revision, and unknown fields round-trip through `extra`.
+//!
+//! Undo/redo keeps whole-config snapshots. Each `edit` is one step; `edit_grouped` merges
+//! consecutive edits with the same group (typing in one field). No-op edits record nothing.
 
 use gpui_kit::*;
 use protocol::ProjectConfig;
 
 use crate::{api::query_value, state::AppState, views::tasks::ui::{self, Load}};
+
+const HISTORY_LIMIT: usize = 100;
 
 pub struct ConfigDraft {
     state: AppState,
@@ -18,6 +23,10 @@ pub struct ConfigDraft {
     pub error: Option<String>,
     /// Bumped per edit; a save adopts the response only if nothing changed meanwhile.
     generation: u64,
+    undo: Vec<ProjectConfig>,
+    redo: Vec<ProjectConfig>,
+    /// Group of the last recorded step; a matching `edit_grouped` extends it.
+    group: Option<String>,
     seen_version: u64,
     _task: Option<gpui_kit::Task<()>>,
     _subscription: Subscription,
@@ -43,6 +52,9 @@ impl ConfigDraft {
             saving: false,
             error: None,
             generation: 0,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            group: None,
             _task: None,
             _subscription: subscription,
         };
@@ -59,17 +71,81 @@ impl ConfigDraft {
         self.draft.as_ref().or(self.server.ready())
     }
 
-    /// Mutates the draft (created from the server copy on first edit).
+    /// Mutates the draft (created from the server copy on first edit). A mutation that leaves
+    /// the config as it was is not an edit: no dirty flag, generation bump or notify. This
+    /// keeps late input echoes (inputs re-synced from a saved config) from re-dirtying it.
     pub fn edit(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut ProjectConfig)) {
-        if self.draft.is_none() {
-            self.draft = self.server.ready().cloned();
+        self.record(None, cx, f);
+    }
+
+    /// Like `edit`, but consecutive edits with the same `group` are one undo step.
+    pub fn edit_grouped(&mut self, group: String, cx: &mut Context<Self>, f: impl FnOnce(&mut ProjectConfig)) {
+        self.record(Some(group), cx, f);
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    pub fn undo(&mut self, cx: &mut Context<Self>) {
+        let (Some(previous), Some(current)) = (self.undo.pop(), self.config().cloned()) else { return };
+        self.redo.push(current);
+        self.restore(previous, cx);
+    }
+
+    pub fn redo(&mut self, cx: &mut Context<Self>) {
+        let (Some(next), Some(current)) = (self.redo.pop(), self.config().cloned()) else { return };
+        self.undo.push(current);
+        self.restore(next, cx);
+    }
+
+    fn record(&mut self, group: Option<String>, cx: &mut Context<Self>, f: impl FnOnce(&mut ProjectConfig)) {
+        let Some(current) = self.config().cloned() else { return };
+        let mut next = current.clone();
+        f(&mut next);
+        if next == current {
+            return;
         }
-        if let Some(draft) = self.draft.as_mut() {
-            f(draft);
+        if group.is_none() || group != self.group {
+            self.undo.push(current);
+            if self.undo.len() > HISTORY_LIMIT { self.undo.remove(0); }
+        }
+        self.redo.clear();
+        self.group = group;
+        self.set_current(next, cx);
+    }
+
+    /// A history snapshot keeps its content but takes the current base revision, so undoing
+    /// across a save doesn't look like a stale write.
+    fn restore(&mut self, mut snapshot: ProjectConfig, cx: &mut Context<Self>) {
+        if let Some(current) = self.config() { snapshot.revision = current.revision }
+        self.group = None;
+        self.set_current(snapshot, cx);
+    }
+
+    fn clear_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.group = None;
+    }
+
+    fn set_current(&mut self, next: ProjectConfig, cx: &mut Context<Self>) {
+        self.generation += 1;
+        // Reverting to the saved copy is clean again (not while a save is in flight, whose
+        // result would otherwise replace what the user just restored).
+        if !self.saving && self.server.ready() == Some(&next) {
+            self.draft = None;
+            self.dirty = false;
+            self.conflict = false;
+        } else {
+            self.draft = Some(next);
             self.dirty = true;
-            self.generation += 1;
-            cx.notify();
         }
+        cx.notify();
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
@@ -79,12 +155,18 @@ impl ConfigDraft {
             let result = api.get::<ProjectConfig>(&path).await;
             this.update(cx, |this, cx| {
                 match result {
+                    // Unchanged on the service (most SSE invalidations are run updates): keep
+                    // the draft, validation and canvas state untouched and don't notify.
+                    Ok(config) if this.error.is_none() && this.server.ready() == Some(&config) => return,
                     Ok(config) => {
+                        this.error = None;
                         let base = this.draft.as_ref().map(|draft| draft.revision);
                         if this.dirty {
                             this.conflict = base != Some(config.revision);
                         } else {
                             this.draft = None;
+                            // A newer remote copy replaces the clean one; old steps no longer apply.
+                            if this.server.ready().is_some_and(|server| server.revision != config.revision) { this.clear_history() }
                         }
                         this.server = Load::Ready(config);
                     }
@@ -98,6 +180,7 @@ impl ConfigDraft {
     }
 
     pub fn discard(&mut self, cx: &mut Context<Self>) {
+        self.clear_history();
         self.draft = None;
         self.dirty = false;
         self.conflict = false;
@@ -126,6 +209,7 @@ impl ConfigDraft {
             return gpui_kit::Task::ready(Err(anyhow::anyhow!("Configuration changed elsewhere; choose Reload or Keep mine first.")));
         }
         let (submitted, base) = (self.generation, draft.revision);
+        self.group = None;
         self.saving = true;
         self.error = None;
         cx.notify();

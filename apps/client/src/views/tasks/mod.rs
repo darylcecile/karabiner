@@ -6,6 +6,7 @@ mod date_field;
 mod detail;
 pub mod intervention_card;
 pub mod runs;
+pub mod source;
 pub mod ui;
 
 use std::collections::HashMap;

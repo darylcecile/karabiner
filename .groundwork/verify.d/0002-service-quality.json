@@ -1,0 +1,20 @@
+{
+  "checks": {
+    "service-lint": {
+      "command": "bun run --cwd packages/service lint",
+      "expect": "Service source and owned lint configuration satisfy the existing Oxlint rules",
+      "paths": ["packages/service/**", "bun.lock"]
+    },
+    "service-format": {
+      "command": "bun run --cwd packages/service fmt:check",
+      "expect": "Service files satisfy the existing Oxfmt configuration before final verification",
+      "paths": ["packages/service/**"]
+    },
+    "service-types": {
+      "command": "bun run typecheck",
+      "expect": "Service, CLI, contracts and verification drivers type-check",
+      "required": true,
+      "paths": ["packages/**/*.ts", "tsconfig.json", ".groundwork/scripts/**/*.ts"]
+    }
+  }
+}

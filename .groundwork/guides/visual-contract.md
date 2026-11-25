@@ -1,6 +1,6 @@
 # Visual contract (master)
 
-The visual source of truth for the client redesign. All values are native points (pt = GPUI px at 1×). Where a reference conflicts with this document, the user's Spatial board (`D3C651DA…` › folder `844C40CB…`) wins and this document should be corrected. `spatial-references-a/b.md` are navigation notes only. Their 13px/dense estimates are **not** authoritative. Per-view measurements are in `visual-project-measurements.md` and the B researcher's guide. Where those overlap with this file, this file decides.
+The visual source of truth for the client redesign. All values are native points (pt = GPUI px at 1×). Newer explicit user direction takes precedence for its affected feature. Otherwise, where a reference conflicts with this document, the user's Spatial board (`D3C651DA…` › folder `844C40CB…`) wins and this document should be corrected. `spatial-references-a/b.md` are navigation notes only. Their 13px/dense estimates are **not** authoritative. Per-view measurements are in `visual-project-measurements.md` and the B researcher's guide. Where those overlap with this file, this file decides.
 
 ## Root causes (historical, gpui-pre 0.3.14 / gpui-component 0.11.0)
 
@@ -165,14 +165,15 @@ Single-line Kit inputs take their height from `Size`; Kit's inherent `h` sizes t
 
 ## Runtime status
 
-Everything above is a source/reference contract. Native rendering proof is **pending** the final batched capture. Results and the per-item checklist live in the external evidence matrix, not in this guide.
+These values describe the source/reference contract. Actual rendering observations, approvals and remaining gaps live in the retained external verification records; the guide itself is not visual evidence.
 
 ## Rulings on researcher questions
 
 - **No 11pt floor for routine text.** Use `t_caption` 12 for the minimum readable meta (exit-rule line, counts, timestamps). 11 is `t_micro` only.
 - Board tray 12, card 8, inset 8. Strict concentricity applies only to flush or ≤4 insets.
 - Collapsed rail: as in the table. The label uses `vertical_label`. If SVG glyphs don't render in the correct system font, report back. Never fall back to a letter stack.
-- Stage editor: there is no single reference. Compose it from the `630BC713` property grid (label column 100, rows 28), the `851174F7` diagram node boxes (R8 node, border; mono index `t_code_caption`), and the `B6BD5981` inspector panels (`section_card`). Keep its behaviour and don't invent new styling.
+- Factory editor: preserve the native React Flow-derived interaction language with the user's explicit amendments: left-to-right flow, left-boundary inputs, right-boundary outputs and no visible React Flow label. Source/distribution MIT attribution remains. Conflicting vertical reference geometry is superseded, as recorded in [native factory canvas](../decisions/native-factory-canvas.md).
+- Factory/settings forms: the latest user direction requires unclipped MXC/Apple status chips and long labels, coherent grouping and consistent indentation. Flatten redundant decorative wrappers with spacing/separators while each input owns its normal border. This is the user's Karabiner override, not a claim that Linear has no nested outlines: its auto-close screen has outlined selects inside an outlined group. Opus 5.5's accepted four-screen **Linear-only** research is linked from the [native guide](client-interface.md#accepted-factory-form-and-geometry-direction). Final review accepts the resulting aligned rows, sections/disclosure, responsive target chips, viewport-aware menus and return multiselect; exact captures and scope are in the [capability matrix](factory-capabilities.md). Existing typography/spacing/control roles still apply.
 - Expanded project header: the title row uses `t_title`, the description uses `t_body` secondary, and progress uses `t_caption`. Put the view tabs and the Status/Stages segmented control (default Stages) on one 36 row using shared `segmented` sizing. Remove duplicated badges. Follow the exact references, not a blend.
 
 

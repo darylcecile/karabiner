@@ -2,9 +2,8 @@
 //! instructions, skills and execution environment (shared config draft), and deletion.
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName,
     button::{Button, ButtonVariants as _},
-    input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    input::{Input, InputEvent, InputState, TextareaState},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -21,8 +20,6 @@ use crate::{
     },
 };
 
-/// Right-aligned control width in settings rows.
-const FIELD_W: f32 = 280.;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -31,6 +28,7 @@ enum Page {
     Instructions,
     Skills,
     Environment,
+    Sync,
 }
 
 pub struct ProjectSettings {
@@ -42,6 +40,8 @@ pub struct ProjectSettings {
     agents: Entity<AgentsEditor>,
     instructions: Entity<LibraryEditor>,
     skills: Entity<LibraryEditor>,
+    integration: Entity<super::integration::IntegrationPanel>,
+    target: Entity<crate::views::workflow::target::TargetEditor>,
     targets: Load<Vec<ExecutionTargetInfo>>,
     // General draft
     name: Entity<InputState>,
@@ -68,14 +68,16 @@ pub struct ProjectSettings {
 
 impl ProjectSettings {
     pub fn new(state: AppState, project_id: String, config: Entity<ConfigDraft>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let agents = cx.new(|cx| AgentsEditor::new(config.clone(), window, cx));
+        let agents = cx.new(|cx| AgentsEditor::new(state.clone(), config.clone(), window, cx));
         let instructions = cx.new(|cx| LibraryEditor::new(config.clone(), LibraryKind::Instructions, window, cx));
         let skills = cx.new(|cx| LibraryEditor::new(config.clone(), LibraryKind::Skills, window, cx));
+        let target = cx.new(|cx| crate::views::workflow::target::TargetEditor::new(state.clone(), project_id.clone(), config.clone(), window, cx));
+        let integration = cx.new(|cx| super::integration::IntegrationPanel::new(state.clone(), project_id.clone(), config.clone(), window, cx));
         let input = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let name = input("Project name", window, cx);
         let root_path = input("/Users/you/code/project", window, cx);
         let repository = input("owner/repository", window, cx);
-        let external_ref = input("Linear team key, e.g. ENG", window, cx);
+        let external_ref = input("Linear team key or project URL, or GitHub Project URL", window, cx);
         let description = cx.new(|cx| TextareaState::new(window, cx).auto_grow(2, 6).placeholder("What is this project for?"));
         let mut subscriptions = vec![cx.observe(&config, |_, _, cx| cx.notify())];
         for input in [&name, &root_path, &repository, &external_ref] {
@@ -87,7 +89,7 @@ impl ProjectSettings {
             if matches!(event, InputEvent::Change) && !this.syncing { this.touch(cx) }
         }));
         let mut this = Self {
-            state, project_id, project: None, config, page: Page::General, agents, instructions, skills, targets: Load::Loading,
+            state, project_id, project: None, config, page: Page::General, agents, instructions, skills, integration, target, targets: Load::Loading,
             name, description, root_path, repository, external_ref, kind: ProjectKind::Standalone, base_revision: 0,
             dirty: false, conflict: false, saving: false, error: None, confirm_delete: false, syncing: false,
             generation: 0, _reports: None, _tasks: Vec::new(), width: Default::default(), _subscriptions: subscriptions,
@@ -116,6 +118,8 @@ impl ProjectSettings {
 
     fn adopt(&mut self, project: &Project, cx: &mut Context<Self>) {
         self.kind = project.kind.clone();
+        let kind = self.kind.clone();
+        self.integration.update(cx, |panel, cx| panel.set_kind(kind, cx));
         self.base_revision = project.revision;
         self.dirty = false;
         self.conflict = false;
@@ -273,62 +277,43 @@ impl ProjectSettings {
         let weak = cx.weak_entity();
         let kind_control = if self.kind.is_known() {
             ui::segmented("project-kind", &[(ProjectKind::Standalone, "Standalone"), (ProjectKind::Github, "GitHub"), (ProjectKind::Linear, "Linear")],
-                self.kind.clone(), move |kind, _, cx| { weak.update(cx, |this, cx| { this.kind = kind; this.touch(cx) }).ok(); }, cx).into_any_element()
+                self.kind.clone(), move |kind, _, cx| { weak.update(cx, |this, cx| {
+                    this.integration.update(cx, |panel, cx| panel.set_kind(kind.clone(), cx));
+                    this.kind = kind;
+                    this.touch(cx)
+                }).ok(); }, cx).into_any_element()
         } else {
             ui::chip(format!("{} (unsupported here, kept as is)", self.kind.as_str()), cx).into_any_element()
         };
         let source_note = match self.kind {
-            ProjectKind::Github => "Tasks can reference issues and pull requests in this repository. Sync is not available yet.",
-            ProjectKind::Linear => "Tasks can reference Linear issues for this team. Sync is not available yet.",
+            ProjectKind::Github => "Issues from this repository or GitHub Project sync as tasks. Set up sync under Sync.",
+            ProjectKind::Linear => "Issues from this Linear team or project sync as tasks. Set up sync under Sync.",
             _ => "A local project. Tasks live only in Karabiner.",
         };
-        let t = theme::tokens(cx);
-        // Narrow (same <760 rule as the nav): each row puts title + description above a
-        // full-width control instead of squeezing the label column beside fixed controls.
+        // Narrow (same <760 rule as the nav): controls go under their labels at full width.
         let stacked = crate::views::responsive::narrower_than(&self.width, 760.);
-        let input = |state: &Entity<InputState>| div().when(stacked, |this| this.w_full()).when(!stacked, |this| this.w(px(FIELD_W)))
-            .child(components::input_md(Input::new(state)));
-        let row = |title: &'static str, description: Option<SharedString>, control: AnyElement, cx: &App| -> AnyElement {
-            if !stacked {
-                return components::settings_row(title, description, control, cx).into_any_element();
-            }
-            let t = theme::tokens(cx);
-            div().py_3().flex().flex_col().gap_2()
-                .child(div().flex().flex_col().gap_0p5()
-                    .child(div().t_body().font_weight(FontWeight::MEDIUM).text_color(t.text).child(title))
-                    .children(description.map(|text| div().t_body().text_color(t.text_secondary).child(text))))
-                .child(div().w_full().min_w_0().flex().child(control))
-                .into_any_element()
-        };
-        // Grouped settings cards (refs 92D96623, B6BD5981): label above, rows with dividers.
+        let input = |state: &Entity<InputState>| div().w_full().child(components::input_md(Input::new(state)));
+        let row = |title: &'static str, help: &'static str, control: AnyElement, cx: &App| components::form_row(title, (!help.is_empty()).then(|| help.into()), control, stacked, cx);
+        // Plain sections with hairline rows (ref form-research/v-linear-*): no cards around
+        // fields, so each field's own border is the only one.
         div().flex().flex_col()
-            .child(components::section_label("Project", cx).pt_0())
-            .child(components::section_card(cx)
-                // Name and description are one identity block: both stacked, full width.
-                .child(div().py_3().flex().flex_col().gap_2()
-                    .child(div().t_body().font_weight(FontWeight::MEDIUM).text_color(t.text).child("Name"))
-                    .child(components::input_md(Input::new(&self.name))))
-                .child(components::row_divider(cx))
-                .child(div().py_3().flex().flex_col().gap_2()
-                    .child(div().t_body().font_weight(FontWeight::MEDIUM).text_color(t.text).child("Description"))
-                    .child(div().rounded(px(metrics::R_CONTROL)).border_1().border_color(t.border).bg(t.surface).px_2p5().py_1p5().t_label()
-                        .child(Textarea::new(&self.description).appearance(false)))))
-            .child(components::section_label("Source", cx))
-            .child(components::section_card(cx)
-                .child(row("Source", Some(source_note.into()), kind_control, cx))
-                .child(components::row_divider(cx))
-                .child(row("Local checkout", Some("Folder agents work in.".into()), input(&self.root_path).into_any_element(), cx))
+            .child(components::form_section("Project", None, cx).pt_0())
+            .child(components::form_rows(cx)
+                .child(row("Name", "", input(&self.name).into_any_element(), cx))
+                .child(components::form_row("Description", None, components::textarea_box(&self.description, cx), true, cx)))
+            .child(components::form_section("Source", Some(source_note.into()), cx))
+            .child(components::form_rows(cx)
+                .child(row("Source", "", kind_control, cx))
+                .child(row("Local checkout", "Folder agents work in.", input(&self.root_path).into_any_element(), cx))
                 .when(self.kind == ProjectKind::Github, |this| this
-                    .child(components::row_divider(cx))
-                    .child(row("GitHub repository", Some("owner/name".into()), input(&self.repository).into_any_element(), cx)))
+                    .child(row("GitHub repository", "owner/name", input(&self.repository).into_any_element(), cx))
+                    .child(row("GitHub Project", "Optional. Its URL, to sync the Project's items instead of the repository's issues.", input(&self.external_ref).into_any_element(), cx)))
                 .when(self.kind == ProjectKind::Linear, |this| this
-                    .child(components::row_divider(cx))
-                    .child(row("Linear team", None, input(&self.external_ref).into_any_element(), cx))
-                    .child(components::row_divider(cx))
-                    .child(row("Code repository", Some("Optional.".into()), input(&self.repository).into_any_element(), cx))))
-            .child(components::section_label("Danger zone", cx))
-            .child(components::section_card(cx)
-                .child(row("Delete project", Some("Removes its tasks, documents and configuration from the service.".into()),
+                    .child(row("Linear source", "Team key (e.g. ENG), or a project URL or id.", input(&self.external_ref).into_any_element(), cx))
+                    .child(row("Code repository", "Optional.", input(&self.repository).into_any_element(), cx))))
+            .child(components::form_section("Danger zone", None, cx))
+            .child(components::form_rows(cx)
+                .child(row("Delete project", "Removes its tasks, documents and configuration from the service.",
                     components::button_row_action(Button::new("delete-project").danger().icon(gpui_kit::assets::IconName::Trash)
                         .label(if self.confirm_delete { "Click again to delete" } else { "Delete" }))
                         .on_click(cx.listener(|this, _, _, cx| this.delete(cx))).into_any_element(), cx)))
@@ -337,19 +322,36 @@ impl ProjectSettings {
 
 impl Render for ProjectSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Children act on saved data; tell them what General has unsaved.
+        let (dirty, root) = (self.dirty, self.root_path.read(cx).value().trim().to_string());
+        let checkout = (!root.is_empty()).then(|| root.clone());
+        self.agents.update(cx, |agents, _| agents.set_checkout(checkout));
+        let saved_root = self.project.as_ref().and_then(|project| project.root_path.clone()).unwrap_or_default();
+        self.integration.update(cx, |panel, _| panel.set_source_dirty(dirty));
+        use crate::views::workflow::target::RootDraft;
+        let draft = match (dirty && root != saved_root, root.is_empty()) {
+            (false, _) => RootDraft::Saved,
+            (true, true) => RootDraft::Cleared,
+            (true, false) => RootDraft::Edited(root),
+        };
+        let stacked = crate::views::responsive::narrower_than(&self.width, 760.);
+        self.target.update(cx, |target, _| { target.set_project_root(draft); target.set_stacked(stacked) });
+        self.integration.update(cx, |panel, _| panel.set_stacked(stacked));
         let page = self.page;
         let content = match page {
             Page::General => self.render_general(cx).into_any_element(),
             Page::Agents => self.agents.clone().into_any_element(),
             Page::Instructions => self.instructions.clone().into_any_element(),
             Page::Skills => self.skills.clone().into_any_element(),
-            Page::Environment => div().flex().flex_col().gap_4()
-                .child(div().t_body().text_color(cx.theme().muted_foreground).child("Where agents for this project will run. Selection is saved now; launching environments isn't available yet."))
-                .child(environment_picker(&self.config, &self.targets, cx)).into_any_element(),
+            Page::Sync => self.integration.clone().into_any_element(),
+            Page::Environment => div().flex().flex_col()
+                .child(components::form_section("Where runs execute", Some("Runs already started keep the environment they started with.".into()), cx).pt_0())
+                .child(environment_picker(&self.config, &self.targets, cx))
+                .child(self.target.clone()).into_any_element(),
         };
         let nav = [
             (Page::General, "General"), (Page::Agents, "Agents"), (Page::Instructions, "Instructions"),
-            (Page::Skills, "Skills"), (Page::Environment, "Environment"),
+            (Page::Skills, "Skills"), (Page::Environment, "Environment"), (Page::Sync, "Sync"),
         ];
         let stacked = crate::views::responsive::narrower_than(&self.width, 760.);
         // The nav stays put (outside the scroll pane) so every section is reachable however

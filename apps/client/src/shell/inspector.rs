@@ -281,7 +281,7 @@ impl Inspector {
             );
         }
         let runs = if details.runs.is_empty() {
-            note("No runs recorded. Execution isn't connected.", cx)
+            note("No runs recorded", cx)
         } else {
             div().children(details.runs.iter().map(|run| {
                 field("Run", Some(format!("{} · {}", run.state, short_time(&run.created_at))), cx)

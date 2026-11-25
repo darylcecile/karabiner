@@ -539,13 +539,18 @@ impl HomeView {
                 (format!("{:.0}%", stats.completion_rate * 100.0), "Completed".into(), format!("{} done", stats.completed_task_count)),
                 (stats.document_count.to_string(), "Documents".into(), format!("{docs_edited} edits · {range}")),
                 (stats.tour_count.to_string(), "Code tours".into(), "All time".into()),
-                (stats.intervention_count.to_string(), "Interventions".into(), "Recorded intents".into()),
+                (stats.intervention_count.to_string(), "Interventions".into(), "All time".into()),
             ],
             _ => Vec::new(),
         };
+        let execution = matches!(&self.data.stats, Some(Ok(stats)) if stats.execution_available);
         let unavailable = match &self.data.stats {
             Some(Ok(stats)) => vec![
-                ("Runs", stats.run_count.map(|n| n.to_string())),
+                ("Runs", stats.run_count.map(|n| match (stats.completed_run_count, stats.failed_run_count) {
+                    (Some(done), Some(failed)) => format!("{n} · {done} done · {failed} failed"),
+                    _ => n.to_string(),
+                })),
+                ("Avg duration", stats.average_duration_ms.map(|ms| format!("{:.0}s", ms / 1000.))),
                 ("Tokens", stats.tokens.map(|n| n.to_string())),
                 ("Cost", stats.cost.map(|n| format!("${n:.2}"))),
             ],
@@ -582,7 +587,7 @@ impl HomeView {
                                 .child(div().text_color(t.text).child(value.unwrap_or_else(|| "Not available".into())))
                         }))
                         .child(div().flex_1())
-                        .child(div().text_color(t.text_secondary).child("Execution isn't connected yet")),
+                        .when(!execution, |this| this.child(div().text_color(t.text_secondary).child("Execution isn't connected yet"))),
                 )
             })
     }

@@ -1,0 +1,22 @@
+{
+  "checks": {
+    "factory-runtime": {
+      "command": "bun .groundwork/scripts/factory-runtime.ts",
+      "expect": "Compiled service/CLI retain five serial business scenarios plus exact readiness/live-protocol CLI cases, with branching/returns, controls/recovery, scheduler pickup and observed artifacts/usage",
+      "kind": "workflow",
+      "paths": ["packages/contracts/**", "packages/service/**", "packages/cli/**", ".groundwork/scripts/factory-runtime.ts", ".groundwork/scripts/fixtures/factory-*.ts"],
+      "covers": ["factory-runtime"],
+      "artifacts": ["factory-runtime.json"],
+      "result": "result.json",
+      "context": { "fixture": "isolated-local-factory", "providers": "scripted-only", "externalWrites": false }
+    }
+  },
+  "behaviours": {
+    "factory-runtime": {
+      "description": "Compiled factories dispatch durable local runs, addressed controls/questions, observed outputs and explicit scheduler pickup",
+      "entry": "CLI factory compile/export/import; run start/control; question answer through /v1",
+      "paths": ["packages/contracts/**", "packages/service/src/runtime/**", "packages/service/src/execution.ts", "packages/service/src/run-store.ts", "packages/cli/src/runtime.ts", "packages/cli/src/factory.ts"],
+      "guide": ".groundwork/guides/factory-runtime.md"
+    }
+  }
+}

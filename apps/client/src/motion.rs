@@ -33,3 +33,22 @@ pub fn popover() -> Transition {
 pub fn standard() -> Transition {
     Transition::new(STANDARD).easing(Easing::EaseOut)
 }
+
+pub use gpui_kit::base::ReduceMotionPreference;
+
+/// Applies the persisted app motion setting (Settings → Appearance) on top of macOS.
+pub fn apply(motion: Option<&protocol::Motion>, cx: &mut gpui_kit::App) {
+    let preference = match motion {
+        Some(protocol::Motion::Reduce) => ReduceMotionPreference::Reduce,
+        Some(protocol::Motion::Full) => ReduceMotionPreference::Allow,
+        _ => ReduceMotionPreference::System,
+    };
+    if cx.try_global::<MotionOverride>().map(|value| value.0) == Some(preference) { return }
+    cx.set_global(MotionOverride(preference));
+    gpui_kit::base::set_reduce_motion_preference(preference, cx);
+    cx.refresh_windows();
+}
+
+struct MotionOverride(ReduceMotionPreference);
+
+impl gpui_kit::Global for MotionOverride {}

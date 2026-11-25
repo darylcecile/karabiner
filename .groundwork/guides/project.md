@@ -1,10 +1,11 @@
 # Project context
 
-Karabiner is a native Rust/GPUI desktop client (`apps/client`, `crates/protocol`) plus an independently versioned Bun service, CLI and contracts (`packages/`). The service-owned Bun SQLite store is the source of truth. Stored CRUD, configuration, documents, code tours and intervention intent are implemented. Scheduler, harness, integration and VM execution are user-owned extension points.
+Karabiner is a native Rust/GPUI desktop client (`apps/client`, `crates/protocol`) plus an independently versioned Bun service, CLI and contracts (`packages/`). Service-owned SQLite is the source of truth for CRUD, configuration, compiled factory snapshots, runs, questions and reviewable outputs. The service implements explicit task dispatch/scheduling, local/Strands harness adapters, GitHub/Linear synchronization and optional host/MXC/Apple-container targets. Environment prerequisites and authentication are observed separately from implemented capabilities. The native factory canvas adapts React Flow's relevant graph algorithms/interactions with MIT attribution.
 
 - Setup, run and build commands: root [README](../../README.md).
-- Boundaries: [client/service decision](../decisions/client-service-boundary.md), [local service boundary](../decisions/local-service-boundary.md).
+- Boundaries: [client/service decision](../decisions/client-service-boundary.md), [local service boundary](../decisions/local-service-boundary.md), [factory execution](../decisions/factory-execution-boundary.md), [native canvas](../decisions/native-factory-canvas.md).
+- Current user-workflow completeness: [single capability matrix](factory-capabilities.md) and [evolving contract handoff](factory-contracts.md). Prior bounded acceptance does not establish the new connected-setup, parallel/retry, native-permission/live-guidance or editor-history workflows.
 - Guides: [client interface](client-interface.md), [GPUI foundation](gpui-foundation.md), [service](service.md), [domain research](domain-contracts.md), visual design authority [visual contract](visual-contract.md) (measurements: [projects/tasks](visual-project-measurements.md), [docs/review/stats](visual-docs-measurements.md); [A](spatial-references-a.md) / [B](spatial-references-b.md) are research notes only).
-- Checks: `groundwork verify service-types service-roundtrip client-native-smoke` (macOS; native smoke needs Screen Recording and Accessibility permission).
+- Factory checks: `groundwork verify service-types service-roundtrip factory-runtime factory-integrations`; the focused native factory check requires the already-built client plus Screen Recording/Accessibility permission and its completed driver. See [factory journey](factory-runtime.md).
 
 Reuse any running app, service and data. Never stop or replace them as a side effect. Verification starts only its own temporary service and database. No provider calls, VM launches, credential collection or external data changes are required.

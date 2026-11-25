@@ -374,6 +374,19 @@ fn trace_qa_fixture() -> Run {
             span("tests", Some("plan"), "Run checkout tests", SpanKind::Tool, Failed, 46_000., Some(9_000.)),
             span("gate", Some("plan"), "Review gate", SpanKind::Gate, Completed, 56_000., Some(4_000.)),
         ]),
+        project_id: None,
+        revision: None,
+        updated_at: None,
+        retry_of: None,
+        current_stage_id: None,
+        active_stage_ids: Vec::new(),
+        questions: Vec::new(),
+        instructions: Vec::new(),
+        errors: Vec::new(),
+        artifacts: Vec::new(),
+        pause_requested: false,
+        transition_count: None,
+        trigger: None,
     }
 }
 

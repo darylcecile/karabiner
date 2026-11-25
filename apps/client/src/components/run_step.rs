@@ -137,6 +137,7 @@ pub fn step_glyph(state: StepState, cx: &App) -> impl IntoElement {
         // A failure reads as a warning (ref F263F6D3 failed rows), not a cancel ×.
         StepState::Failed => base.child(Icon::new(gpui_kit::assets::IconName::TriangleAlert).size(px(14.)).text_color(t.danger)),
         StepState::Pending => base.border(px(1.5)).border_dashed().border_color(cx.theme().muted_foreground),
-        StepState::NotRecorded => base.border(px(1.5)).border_color(cx.theme().border),
+        // Tertiary, not `border`: the row hover fill would hide a border-coloured ring.
+        StepState::NotRecorded => base.border(px(1.5)).border_color(t.text_tertiary),
     }
 }

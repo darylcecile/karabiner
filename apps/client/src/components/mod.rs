@@ -3,6 +3,8 @@
 //! Controls and Kit size adapters: `controls`. Rotated text: `vertical_label`. Run trace: `trace`.
 
 mod controls;
+pub mod factory_canvas;
+mod form;
 mod menu;
 mod run_step;
 mod surfaces;
@@ -11,6 +13,7 @@ pub mod typography;
 mod vertical_label;
 
 pub use controls::*;
+pub use form::*;
 pub use menu::{glyph_item, menu_popover};
 pub use run_step::{Step, StepAnswer, StepState, run_step, step_glyph};
 pub use surfaces::*;

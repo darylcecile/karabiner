@@ -1,7 +1,7 @@
 # Client interface (v1, 2026-11-24; additions are backward compatible)
 
 Lead owns: root `Cargo.toml`/`Cargo.lock`/`rust-toolchain.toml`, `crates/protocol`, `apps/client/src/{main,app,theme,motion}.rs`, `api/`, `state/`, `components/`, `views/mod.rs`.
-Feature owners replace the stub bodies in their files and keep the signatures. If a module grows, turn it into a folder (`views/tasks/mod.rs`) with the same `pub fn`s.
+Feature views keep the shared entry-point signatures. If a module grows, turn it into a folder (`views/tasks/mod.rs`) with the same `pub fn`s.
 
 | Owner | Files | Entry points |
 |---|---|---|
@@ -33,7 +33,7 @@ pub fn tab(target: &TabTarget, state: AppState, window: &mut Window, cx: &mut Ap
   - `ApiError::{Unavailable, Status{status, body}, Decode}` with `is_conflict()` (409), `is_not_found()`, `is_not_implemented()` (501).
   - Paths follow `packages/contracts` `ENDPOINTS`.
 - `ServiceState`: `status()`, `data_version()`.
-- `protocol::*` mirrors the contracts. Unknown enum values become `Unknown`; render a fallback. `TourBlock::content()` returns `None` for unknown kinds; keep those blocks. `Statistics` run/tokens/cost are `None` and must read "Not available", never 0.
+- `protocol::*` mirrors the contracts. Unknown enum values become `Unknown`; render a fallback. `TourBlock::content()` returns `None` for unknown kinds; keep those blocks. Statistics and run views display recorded values; missing metrics stay "Not available" rather than becoming zero.
 
 ## Data loading pattern
 ```rust
@@ -54,9 +54,29 @@ fn reload(&mut self, cx: &mut Context<Self>) {
 - Feature-local state (`ProjectUi`, `TaskUi`) is fine. There is no global cache.
 
 ## Refresh semantics
-- The client refetches on: service ready, ⌘R or Retry, window re-activation (this is how CLI edits appear), and any `data_changed`. The service offers `GET /v1/events` (SSE); the client deliberately does not subscribe.
+- The client refetches on service ready, ⌘R or Retry, window re-activation and `data_changed`. When metadata advertises events, a background `/v1/events` reader invalidates runtime/CLI changes; the native coalescer batches bursts within 400ms. The stream reconnects with 1–30 second backoff; ready/reconnect invalidations trigger snapshot refresh because events are not replayed. An older service without the stream retains manual/focus refresh.
 - **Dirty edits win.** A view keeps its draft and `base_revision` separately from the fetched record. On refetch, a non-dirty view adopts the new record. A dirty view keeps the draft; if the server revision moved, it shows "Changed elsewhere: Reload / Keep mine". Saves send `revision: Some(base_revision)`. On 409, show the same choice; never retry a save silently.
 - Tabs stay mounted while open, so drafts survive tab switches. Closing a tab whose tracked draft is dirty opens Save / Discard / Cancel; a failed save keeps the tab. `replace_active` opens a new tab instead of replacing a dirty one. The window refuses to close while any tab is dirty.
+
+## Factory canvas and live drafts
+
+- `apps/client/src/views/workflow/config.rs::ConfigDraft` treats an unchanged mutation as a no-op: no dirty flag or generation bump. Reverting to the saved value becomes clean when no save is in flight. An unchanged service response avoids notifying the controller, so run SSE updates preserve pending validation and canvas state.
+- `apps/client/src/views/workflow/factory/mod.rs` updates inspector fields only when values differ and ignores deferred programmatic echoes that already match the model. Real edits retain the existing revision/conflict/save rules; run updates do not manufacture fresh edits.
+- `apps/client/src/components/factory_canvas/` owns graph-space geometry and native gestures. Initial Fit tracks settling canvas bounds until user interaction, never during an active gesture; later data invalidations do not reframe the viewport. Explicit Fit is separate.
+- Factory panels use **allocated pane width**: at least 1020pt docks the 220pt library and 320pt inspector while preserving a 480pt canvas; at 800–1019pt the library floats; below 800pt both panels float behind toolbar toggles with their own close rows. Closing floating panels exposes the full allocated canvas.
+
+### Accepted factory form and geometry direction
+
+The [native-canvas ADR](../decisions/native-factory-canvas.md#explicit-visual-amendment) links the four actual Linear screens inspected by Opus 5.5: team settings index, auto-close/archive, status groups and team menu. Their `SOURCES.txt` and viewed `v-*` copies are retained at external `manual-evidence/factory-form-research-linear-2026-11-25/`. This accepted visual research satisfies the user's examples “like Orca or Linear”; Orca was not opened and is not a remaining research prerequisite.
+
+- Observed in Linear: aligned rows, restrained surfaces, clear sections/indexing and dependent settings. The auto-close reference has outlined selects inside an outlined group; it does not establish a no-inner-borders or one-border-level rule.
+- Chosen for Karabiner under the user's override: flatten redundant decorative wrappers, using spacing/separators for grouping while each input owns its normal border. Align responsive label/control rows and stack them under narrow allocation. Keep target status chips and long labels readable rather than shrinking them into clipped boxes.
+- Organize the inspector into meaningful sections with disclosure for secondary detail. Use a bounded return-target multiselect with a compact selection summary, stable stage IDs and save/reopen persistence. Keep its menu and other form menus inside the visible viewport.
+- The explicit user direction overrides old vertical-reference geometry and visible branding: left-to-right graph defaults, left-boundary inputs, right-boundary outputs, consistent edge/hit geometry and no visible React Flow label. Keep the MIT notice and adapted-source attribution in source/distribution.
+
+These implemented choices combine the observed Linear patterns with explicit user overrides; they are not a literal copy of Linear's border treatment. Final Opus review and the passing horizontal-connection run close native acceptance with the exact mixed evidence in the [capability matrix](factory-capabilities.md). At900 width the floating inspector intentionally covers the underlying canvas; closing it reveals the full allocation.
+
+Grid dots use one GPUI path rather than a separate painted primitive per dot. The final clean implementation preserves appearance while avoiding the bounds-tree paint work that starved foreground completion. No temporary phase timing or background-HTTP workaround remains. Actual result rows, saved revisions and visually settled validation—not an OCR label alone—establish the recorded completion behavior.
 
 ## Shell behaviour
 - Tab layout persists to `PUT /v1/workspace`: serialized saves, one re-read on 409.
