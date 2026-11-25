@@ -1,0 +1,25 @@
+{
+  "checks": {
+    "service-types": {
+      "command": "bun run typecheck",
+      "expect": "Service, CLI, contracts and their smoke driver type-check",
+      "required": true,
+      "paths": ["packages/**/*.ts", "tsconfig.json", ".groundwork/scripts/service-smoke.ts"]
+    },
+    "service-roundtrip": {
+      "command": "bun .groundwork/scripts/service-smoke.ts",
+      "expect": "Compiled CLI/service persist real records through SQLite restart and expose explicit unsupported execution",
+      "kind": "workflow",
+      "paths": ["packages/**", ".groundwork/scripts/service-smoke.ts"],
+      "covers": ["service-storage", "cli-management", "workspace-storage", "artifact-storage"],
+      "artifacts": ["roundtrip.json"],
+      "result": "result.json"
+    }
+  },
+  "behaviours": {
+    "service-storage": { "description": "Project/task/config/settings CRUD persists in service-owned SQLite", "paths": ["packages/service/**", "packages/contracts/**"], "entry": "CLI project/task/config/settings commands through /v1", "guide": ".groundwork/guides/service.md" },
+    "cli-management": { "description": "Independent CLI manages records through versioned HTTP and reports errors", "paths": ["packages/cli/**"], "entry": "karabiner --json", "guide": ".groundwork/guides/service.md" },
+    "workspace-storage": { "description": "Open tabs, selection and recently-closed context survive service restart", "paths": ["packages/service/**", "packages/contracts/**"], "entry": "GET/PUT /v1/workspace", "guide": ".groundwork/guides/service.md#workspace-and-change-notifications" },
+    "artifact-storage": { "description": "Markdown and typed code tours retain chapters, diffs, commits and review progress", "paths": ["packages/service/**", "packages/contracts/**"], "entry": "Document/tour CRUD", "guide": ".groundwork/guides/service.md#documents-and-code-tours" }
+  }
+}

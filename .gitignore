@@ -1,0 +1,10 @@
+node_modules/
+target/
+dist/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store
+.groundwork/tasks/
+.groundwork/plans/
+.groundwork/tmp/

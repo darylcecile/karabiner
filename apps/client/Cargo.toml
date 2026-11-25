@@ -1,0 +1,21 @@
+[package]
+name = "karabiner-client"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "karabiner"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit.workspace = true
+reqwest_client.workspace = true
+protocol.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jiff.workspace = true

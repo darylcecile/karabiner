@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ESNext", "module": "ESNext", "moduleResolution": "Bundler",
+    "lib": ["ESNext", "DOM"], "types": ["bun"], "strict": true,
+    "noEmit": true, "skipLibCheck": true, "allowImportingTsExtensions": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["packages/**/*.ts", ".groundwork/scripts/**/*.ts"]
+}

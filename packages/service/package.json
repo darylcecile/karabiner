@@ -1,0 +1,8 @@
+{
+  "name": "@karabiner/service", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "build": "bun build src/main.ts --compile --outfile ../../dist/karabiner-service"
+  },
+  "dependencies": { "@karabiner/contracts": "workspace:*" }
+}

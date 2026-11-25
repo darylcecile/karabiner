@@ -1,0 +1,35 @@
+{
+  "checks": {
+    "client-build": {
+      "command": "cargo build -p karabiner-client --locked",
+      "expect": "Native client and protocol mirror compile with the pinned toolchain and lockfile",
+      "required": true,
+      "paths": ["apps/client/**", "crates/protocol/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"]
+    },
+    "client-tests": {
+      "command": "cargo test -p karabiner-client --locked",
+      "expect": "Client unit tests pass: stored tab identity/active retention plus feature parse and state tests",
+      "required": true,
+      "paths": ["apps/client/src/**", "crates/protocol/**", "Cargo.lock"]
+    },
+    "protocol-roundtrip": {
+      "command": "cargo test -p karabiner-protocol --locked",
+      "expect": "Whole-object writes keep unknown enum values, fields and tour blocks",
+      "required": true,
+      "paths": ["crates/protocol/**"]
+    },
+    "client-native-smoke": {
+      "command": "zsh .groundwork/scripts/client-smoke.sh",
+      "expect": "Real window: quick open, close/reopen and sidebar shortcuts work, tabs persist via the service, unavailable state shows",
+      "kind": "workflow",
+      "paths": ["apps/client/src/**", ".groundwork/scripts/client-smoke.sh"],
+      "covers": ["client-workspace-tabs", "client-service-status"],
+      "artifacts": ["journey.txt", "01-home.png", "02-quick-open.png", "03-task-tab.png", "04-sidebar-collapsed.png", "06-sidebar-frame-1.png", "06-sidebar-frame-2.png", "07-cli-task-after-refresh.png", "08-cli-task-after-focus.png", "05-service-unavailable.png"],
+      "result": "result.json"
+    }
+  },
+  "behaviours": {
+    "client-workspace-tabs": { "description": "Titlebar tabs open/close/reopen/switch by keyboard and persist via /v1/workspace", "paths": ["apps/client/src/state/tabs.rs", "apps/client/src/shell/**", "apps/client/src/app.rs"], "entry": "⌘T, ⌘W, ⌘⇧T, ⌘1–9", "guide": ".groundwork/guides/client-interface.md" },
+    "client-service-status": { "description": "Client runs without the service and shows unavailable/incompatible state with Retry", "paths": ["apps/client/src/state/service.rs", "apps/client/src/app.rs"], "entry": "Launch without service; ⌘R", "guide": ".groundwork/guides/client-interface.md" }
+  }
+}
