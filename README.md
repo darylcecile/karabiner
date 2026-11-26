@@ -1,106 +1,64 @@
 # Karabiner
 
-A local software factory for your repositories. Configure workflows and agents, run tasks against a checkout, answer questions and review the results in a native Rust/GPUI app. A separate Bun service owns the data and execution; the CLI uses the same API.
+Karabiner helps you turn a software task into a plan, changes to your project and a review of the results. It works with a coding agent you already use, while giving you a Mac app to organize the work, follow progress and answer questions.
 
-## Getting started
+## Get the preview
 
-### 1. Install the prerequisites
+Karabiner is currently a preview. **There is no public packaged download or Mac installer yet.** Ask the maintainer for a prebuilt preview copy.
 
-- **macOS** for the native client (verified on Apple silicon).
-- **Xcode with the macOS SDK and Metal tools** (`metal` and `metallib`). Select the full Xcode installation as your active developer directory; the client CI uses Xcode 16.4.
-- **Rust via [rustup](https://rustup.rs/)**. Cargo uses the **1.100.0** toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml).
-- **[Bun](https://bun.com/docs/installation) 1.3.14**, pinned in [`package.json`](package.json).
-- To execute agent tasks, an **installed and signed-in agent CLI** such as Copilot, Claude or Codex, available on the service's `PATH`. You can configure a custom harness or Strands provider instead; see [harness setup](.groundwork/guides/service.md#local-harnesses-and-optional-targets).
+You will need:
 
-Clone this repository and install its JavaScript dependencies:
+- An **Apple silicon Mac**—one with an M-series chip.
+- A supported coding agent installed and signed in, such as **GitHub Copilot CLI, Claude Code or Codex CLI**. These are coding tools that can work on your project files; the ordinary ChatGPT or Claude chat app alone is not enough. Use the coding agent's own setup instructions, or ask the maintainer for help preparing it.
 
-```sh
-git clone https://github.com/darylcecile/karabiner.git
-cd karabiner
-bun install --frozen-lockfile
-```
+A supplied preview is already built. You do not need developer tools to use it.
 
-The Rust workspace's local dependencies are included in this checkout. Cargo downloads the pinned GPUI crates when it builds the app.
+## Open Karabiner
 
-### 2. Start the service — terminal 1
+The preview has two files: **`karabiner`**, the desktop app, and **`karabiner-service`**, its companion. The companion saves your work and manages running tasks. You start it yourself each time you want to use Karabiner.
 
-From the repository root:
+1. Save both supplied files somewhere you can find again. If they arrive in a compressed archive, open the archive in Finder first.
+2. In Finder, double-click **`karabiner-service`**. It opens a Terminal window with status text. Wait for the word **ready**, then leave that window open. If the companion is already running, use that instance.
+3. Double-click the supplied **`karabiner`** desktop executable. The app window should appear. This preview uses executable files rather than a usual Mac app installer, so it may also open a Terminal window; leave that open too.
 
-```sh
-bun run service
-```
+You do not need to type commands into those windows. If Finder cannot open the supplied files, or the app window does not appear, ask the maintainer for help with your preview copy.
 
-Wait for the `ready` message. The default URL is **`http://127.0.0.1:43173`**. Leave this terminal running. If you already have a service instance, use that instance and its URL.
+## Set up your first project
 
-### 3. Start the native app — terminal 2
+A **project folder** contains the files you want your coding agent to work on. A **workflow** is the sequence of steps it follows, such as Plan → Implement → Review.
 
-Open another terminal in the repository root:
+1. In Karabiner, open **Projects → New project**, or choose **Templates** in the sidebar. Select **Software delivery**, then **Use template**.
+2. Give the project a name and choose **Standalone** to start with a project on your Mac.
+3. Set **Local checkout** to your existing project folder. This is a text field: in Finder, select the folder and press **Option–Command–C** to copy its full location, then paste it into the field.
+4. Under **Agent harness**, choose the coding agent you installed, then click **Create project**. The Software delivery template uses Copilot when you leave this as **As template**.
+5. Open the project's **Settings → Agents**. Select each agent and click **Check readiness**. Follow any message about installation or signing in, then check again. Click **Save** after changing settings. Start with **Settings → Environment → Local host**.
+6. Open **Workflow** to see the Plan, Implement and Review steps. You can adjust their instructions. After making changes, click **Save**, then **Validate**, and look for **Valid**.
 
-```sh
-cargo run -p karabiner-client --bin karabiner --locked
-```
+## Give it a task
 
-The first launch compiles the app. This command stays in the foreground while the app runs; use a **third terminal** for the optional CLI commands below.
+1. Open the project's **Board** and choose **Add task** or a column's **+** button.
+2. Enter what you want done—for example, “Add a contact form to the website”—and press Enter. Open the task to add more detail about the result you want.
+3. Check the task's **Workflow**, then open **Runs** and click **Start run**.
+4. Follow the steps in **Runs**. Answer questions and permission requests there. Use **Add instruction** if you need to guide the work while it is running.
+5. When it finishes, open the run's results and change reviews. Review the changes in your project folder before deciding what to do next.
 
-If the app shows an unavailable/incompatible service banner, check terminal 1 and the configured URL, then use **Retry** or **⌘R**.
+Creating a project or task does not start an agent by itself. **Start run** begins the work unless you have deliberately enabled automatic scheduling.
 
-### 4. Create your first project and run a task
+## Pause, stop and come back later
 
-1. Open **Projects → New project** (or **Templates** in the sidebar). Select **Software delivery**, then **Use template**. It provides Plan → Implement → Review stages and their agents.
-2. Enter a name, choose **Standalone** for a local project, and set **Local checkout** to the absolute path of an existing code repository. Choose an **Agent harness**, then **Create project**. “As template” uses Copilot for this template. You can change the checkout later in **Settings → General**.
-3. Open the project's **Settings → Agents**. Select each agent, configure its **Harness** and **Model** as needed, and click **Check readiness**. Install/sign in using the selected CLI's own setup instructions if needed, then check again. Save your changes. Start with **Settings → Environment → Local host**; optional containment needs separate setup.
-4. Open **Workflow** to review the stages, assigned agents and instructions. After any changes, click **Save**, then **Validate**. The graph should show **Valid** before execution. Project **Instructions** and **Skills** are available under Settings.
-5. In the project's **Board**, use **Add task** or a column's **+** button, enter a clear task title and press Enter. Open the task, select its **Workflow** if needed, then choose **Runs → Start run**. Creating a project or task alone does not start agents; automatic scheduling is an explicit opt-in.
-6. Follow stage progress in **Runs**. Answer questions and permission requests there, or use **Add instruction** to guide active work. Open the run's outputs, traces and change reviews, and inspect the resulting changes in your checkout.
+- Use **Pause** in **Runs** to pause at a stopping point between steps, then **Resume** to continue. Keep the companion open while work is paused.
+- Use **Cancel** to stop a run. Closing the app window alone does not stop work managed by the companion.
+- When you have finished, stop any active work, close the app window and respond to any unsaved-changes prompt. Click the companion's Terminal window and press **Control–C**. If the app also opened a Terminal window, press **Control–C** there before closing it too.
+- Next time, open the companion first and then Karabiner. Your saved projects, tasks and history will still be there. If a run was interrupted by a shutdown, review its existing changes; the app may offer **Retry** instead of Resume.
 
-**Stopping:** use **Cancel** on a run if you want to stop its work. Close the native app window, resolving any unsaved changes prompt, then press **Ctrl-C** in the service terminal for a clean service shutdown. Project/task/run data persists between launches.
+Karabiner stores your project settings, tasks and history on your Mac. Your project files stay in the folder you chose. Your coding agent continues to use its own account and online provider when carrying out work.
 
-## Data and connection settings
+## If something is not working
 
-The service stores SQLite data at:
+- **The app cannot connect:** check that the companion's Terminal window is still open and says **ready**. Open the companion if it has stopped, then click **Retry** in the app. If the companion shows an error, share that message with the maintainer.
+- **An agent is not ready:** open **Settings → Agents → Check readiness**. Make sure the selected coding tool is installed and signed in with an account that can use it.
+- **A task will not start:** check **Local checkout** under **Settings → General**, confirm that the workflow shows **Valid**, and check the agent's readiness. The message in **Runs** can help explain what needs attention.
 
-```text
-~/Library/Application Support/Karabiner/karabiner.sqlite
-```
+---
 
-Your code remains in the project's **Local checkout**. Change the database path with `bun run service --db /absolute/path/karabiner.sqlite` or `KARABINER_DB`; change the service port with `--port N` or `KARABINER_PORT`.
-
-Both the native app and CLI read **`KARABINER_SERVICE_URL`**. Set it in each client terminal before launching, for example `export KARABINER_SERVICE_URL=http://127.0.0.1:43174` when the service uses port 43174. The CLI also accepts `--url URL`.
-
-GitHub/Linear projects add source synchronization under **Settings → Sync**. Publication is explicit. Copilot currently targets CLI 1.0.116/protocol 4 through `@microsoft/copilot-sdk` 2.0.3; readiness reports version/authentication problems. See the [service guide](.groundwork/guides/service.md) for provider, credential and MXC/Apple-container requirements.
-
-## Optional CLI — terminal 3
-
-Run these from the repository root while the service is running. Replace uppercase placeholders with IDs returned by the list commands:
-
-```sh
-bun run cli status --json
-bun run cli project list --json
-bun run cli task list --project PROJECT_ID --json
-bun run cli run list --project PROJECT_ID --json
-bun run cli question list --run RUN_ID
-bun run cli --help
-```
-
-The CLI can also create/update projects and tasks, start/control runs, answer offered choices, and validate/export/import factories. See [commands and contracts](.groundwork/guides/factory-contracts.md#cli-interaction-contract). For labelled sample data to explore the interface, explicitly run `bun run cli demo seed`.
-
-## Build standalone binaries
-
-```sh
-bun run build:service       # dist/karabiner-service
-bun run build:cli           # dist/karabiner (CLI)
-bun run build:client        # target/debug/karabiner (native app)
-cargo build -p karabiner-client --bin karabiner --release --locked
-                           # target/release/karabiner (native app, embedded assets)
-```
-
-Rust output paths above assume `CARGO_TARGET_DIR` is unset. The Bun binaries include their runtime. Run the service binary first, then the native binary; each remains a separate process. The compiled CLI's `service serve` command can also start `karabiner-service` from `PATH` or `KARABINER_SERVICE_BIN`.
-
-The tag-triggered [Build client](.github/workflows/build-client.yml) and [Build service](.github/workflows/build-service.yml) workflows build on `macos-15`. A successful tagged run uploads `karabiner-client-macos-arm64.tar.gz` or `karabiner-service-macos-arm64.tar.gz` as an Actions artifact on that run's page. Extract the archive to preserve executable permissions.
-
-## API and development reference
-
-- [Service and API guide](.groundwork/guides/service.md): `/v1` endpoints, persistence, run controls, integrations and custom harness protocols. [`packages/contracts/src/index.ts`](packages/contracts/src/index.ts) defines DTOs and the endpoint table; responses use `{data}` or `{error:{code,message}}`.
-- [Native interface guide](.groundwork/guides/client-interface.md): workspace shortcuts, drafts, refresh and canvas behavior.
-- [Verification guide](.groundwork/VERIFY.md) and [accepted feature matrix](.groundwork/guides/factory-capabilities.md): scoped checks, retained evidence and untested live prerequisites. For static development checks, use `bun run typecheck`; select broader checks through the guide.
-- [Architecture decisions](.groundwork/decisions/): native GPUI client, independently versioned service/CLI, service-owned SQLite and declarative factory execution.
+[Developer instructions](.groundwork/guides/project.md#development)
