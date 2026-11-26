@@ -73,7 +73,7 @@ The CLI also creates/updates projects and tasks, starts/controls runs, answers o
 
 [`packages/contracts/src/index.ts`](../../packages/contracts/src/index.ts) defines API DTOs and the endpoint table. Success responses use `{data}` and errors use `{error:{code,message}}`; the [service guide](service.md) documents `/v1`, persistence, runtime controls and custom harnesses. Client, service and CLI versions are independent of API major 1.
 
-### Standalone builds and distribution
+### Standalone builds
 
 ```sh
 bun run build:service       # dist/karabiner-service
@@ -83,14 +83,46 @@ cargo build -p karabiner-client --bin karabiner --release --locked
                            # target/release/karabiner (native app, embedded assets)
 ```
 
-Rust output paths assume `CARGO_TARGET_DIR` is unset. Compiled Bun binaries include their runtime, and the release native client embeds its assets; users of a supplied prebuilt copy do not need Rust, Xcode or Bun. The native app and CLI share an executable name, so distribute the correct `karabiner` binary for the intended purpose.
+Rust output paths assume `CARGO_TARGET_DIR` is unset. Compiled Bun binaries include their runtime, and the release native client embeds its assets; users of the packaged app do not need Rust, Xcode or Bun. The native app and CLI share an executable name, so use the correct `karabiner` binary for the intended purpose.
 
 Run the service binary before the native binary; they are separate foreground processes. The compiled CLI's `service serve` starts `karabiner-service` from `PATH` or `KARABINER_SERVICE_BIN`. Source development can also use `bun run cli service serve`.
 
-The [Build client](../../.github/workflows/build-client.yml) and [Build service](../../.github/workflows/build-service.yml) workflows run **only on pushed tags**, on `macos-15`. A successful run is configured to upload `karabiner-client-macos-arm64.tar.gz` or `karabiner-service-macos-arm64.tar.gz`. These contain raw executable files, not a `.app`, installer or DMG. Extracting the archives preserves executable permissions. As of November 26, 2026, no releases or workflow runs are published; the workflow configuration is not evidence of an available download.
+### Single-client releases
+
+The [release workflow](../../.github/workflows/release.yml) builds the client and service independently on `macos-15` ARM64 with the existing Rust/Bun pins and Xcode16.4 SDK. GitHub's [current runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) identifies `macos-15` as ARM64, and each build checks the actual host architecture. It emits:
+
+| Release asset | Consumer |
+| --- | --- |
+| `Karabiner-macos-arm64.zip` | End user: contains `Karabiner.app/Contents/MacOS/karabiner`, Info.plist and license notices. |
+| `karabiner-service-macos-arm64` | The app's automatic setup: raw compiled service. |
+| `karabiner-service-macos-arm64.sha256` | The app's integrity check: standard shasum line for the service. |
+
+The client build embeds `KARABINER_SERVICE_ASSET_URL=https://github.com/darylcecile/karabiner/releases/download/<exact-tag>/karabiner-service-macos-arm64`. The app never follows a floating latest-service URL. The same URL is recorded in Info.plist so the packaged tag can be inspected. See the [managed-service ADR](../decisions/managed-local-service.md) for reuse, download verification, cache location and process lifetime.
+
+Release builds reuse a compatible running local service, or verify/download and start their matching service when missing. Builds without the embedded URL retain the manual development flow above. Setting `KARABINER_SERVICE_URL` explicitly opts into an externally managed service; the app then does not install/start one.
+
+The repository is public. Tag pushes publish to this repository using the publish job's `GITHUB_TOKEN` with `contents: write`; no extra token or credential is embedded or copied. The publish job waits for **both builds**. `gh release create` with attached assets creates a draft, uploads the complete asset set and then publishes it. A failed upload leaves a draft rather than a half-ready public release; an existing release is not overwritten automatically.
+
+`workflow_dispatch` is **build-only**, requires an exact `release_tag` to embed and never runs the publish job. Use it for bounded CI verification before tagging. Dispatch artifacts only auto-download a service when the embedded release asset is actually available; artifact creation itself does not publish that asset. Publication remains a separate, authorized tag action. As of the initial setup on November26, no release has been published; the README links the Releases page without claiming an existing download.
+
+No Apple signing/notarization credentials are configured. Packaging creates a valid app bundle but does not claim notarization or add a signing-credential setup. The README describes the preview's macOS launch limitation. Existing React Flow and Kubai notices are included; no new icon artwork is generated.
+
+For an explicitly versioned local package after building the native client with the same asset URL:
+
+```sh
+export KARABINER_SERVICE_ASSET_URL="https://github.com/darylcecile/karabiner/releases/download/v0.1.0/karabiner-service-macos-arm64"
+cargo build -p karabiner-client --bin karabiner --release --locked
+bash .github/scripts/package-client.sh target/release/karabiner 0.1.0 dist
+bun run build:service
+bash .github/scripts/package-service.sh dist/karabiner-service dist
+```
+
+The package helper takes a built executable and version, preserves executable mode inside the ZIP and stamps the public service URL. It does not build, install, launch or publish the app. The service helper emits the raw file and checksum without an archive/extraction dependency in the client.
 
 ### Verification
 
-For static development checks, use `bun run typecheck`. See the [verification entry point](../VERIFY.md) and [factory journey](factory-runtime.md) to select relevant checks. Existing factory examples include `groundwork verify service-types service-roundtrip factory-runtime factory-integrations`; native graphical checks use an already-built client, Screen Recording/Accessibility permission and the owned fixture driver.
+For static development checks, use `bun run typecheck`. The `release-packaging` check exercises the actual package helpers with synthetic executable files: plist/ZIP layout, executable mode, exact service URL, license notices and raw service checksum. It launches no app or service; actual compiled first-run behavior is separate native-bootstrap evidence.
+
+See the [verification entry point](../VERIFY.md) and [factory journey](factory-runtime.md) to select relevant checks. Existing factory examples include `groundwork verify service-types service-roundtrip factory-runtime factory-integrations`; native graphical checks use an already-built client, Screen Recording/Accessibility permission and the owned fixture driver.
 
 Reuse any running app, service and data. Never stop or replace them as a side effect. Verification starts only its own temporary service and database. No provider calls, VM launches, credential collection or external data changes are required.

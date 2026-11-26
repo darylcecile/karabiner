@@ -19,3 +19,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Already resolved through gpui-kit (its calendar uses it); used directly for local civil dates.
 jiff = "1.0"
+# Already in the lockfile (via GPUI); verifies the downloaded service before it runs.
+sha2 = "0.10"

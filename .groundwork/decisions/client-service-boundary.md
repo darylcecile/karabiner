@@ -11,7 +11,7 @@ Status: accepted, 2026-11-24. Complements [local service boundary](local-service
 - One authority, the SQLite store owned by the service, avoids sync between clients.
 
 **Consequences.**
-- The client runs without the service and shows unavailable/incompatible states. Compatibility is decided only by `GET /v1/meta` reporting `apiVersion == 1`.
+- The client shows connection/setup state while the service is unavailable. The [managed local service](managed-local-service.md) decision supersedes manual startup for packaged clients at the default local endpoint: reuse a compatible service, otherwise obtain and start the pinned matching service. Explicit `KARABINER_SERVICE_URL` and source builds without an embedded asset URL retain external/manual setup. Compatibility is decided by `GET /v1/meta` reporting `apiVersion == 1`; incompatible running services are not replaced.
 - The client refetches after its own writes, on ⌘R, on focus and through advertised `/v1/events` invalidations. The 2026-11-25 execution extension adds a background SSE reader and 400ms burst coalescing while preserving dirty drafts and older-service fallback.
 - Whole-object PUTs preserve unknown fields and enum values, and revision conflicts are surfaced to the user rather than overwritten.
 - Run/trace/token/cost views show recorded values and retain an unavailable state for unobserved metrics. Runtime controls use addressed service operations.

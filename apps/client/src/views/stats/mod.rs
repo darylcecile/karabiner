@@ -94,6 +94,8 @@ pub struct HomeView {
     create_error: Option<String>,
     doc_error: Option<String>,
     refresh_error: Option<String>,
+    /// Mirrors `ServiceState` each render; offline, Home keeps what it has and stays quiet.
+    service_ready: bool,
     refreshing: bool,
     seen_version: u64,
     load_task: Option<Task<()>>,
@@ -147,6 +149,7 @@ impl HomeView {
             create_error: None,
             doc_error: None,
             refresh_error: None,
+            service_ready: false,
             refreshing: false,
             seen_version,
             load_task: None,
@@ -160,6 +163,10 @@ impl HomeView {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
+        // Not connected: keep the last loaded data; the service state change reloads it.
+        if !self.state.service.read(cx).status().is_ready() {
+            return;
+        }
         let activity_path = format!("/v1/activity?limit={ACTIVITY_LIMIT}");
         let api = self.state.api.clone();
         self.load_task = Some(cx.spawn(async move |this, cx| {
@@ -296,9 +303,13 @@ fn note(text: impl Into<SharedString>, cx: &App) -> Div {
     div().px_3().py_2().t_body().text_color(theme::tokens(cx).text_secondary).child(text.into())
 }
 
-fn load_state<T>(loaded: &Loaded<T>, cx: &App) -> Option<AnyElement> {
+/// A card's load state. While the service isn't ready the global banner explains why, so
+/// cards just wait instead of repeating the connection error.
+fn load_state<T>(loaded: &Loaded<T>, service_ready: bool, cx: &App) -> Option<AnyElement> {
     match loaded {
+        None if !service_ready => Some(note("Waiting for the service…", cx).into_any_element()),
         None => Some(note("Loading…", cx).into_any_element()),
+        Some(Err(_)) if !service_ready => Some(note("Waiting for the service…", cx).into_any_element()),
         Some(Err(error)) => Some(
             div()
                 .px_4()
@@ -483,7 +494,7 @@ impl HomeView {
                 rows.push(self.render_task_row(("needs-task", ix), task, cx).into_any_element());
             }
         }
-        let loading = load_state(&self.data.tasks, cx).or_else(|| load_state(&self.data.interventions, cx));
+        let loading = load_state(&self.data.tasks, self.service_ready, cx).or_else(|| load_state(&self.data.interventions, self.service_ready, cx));
         let empty = rows.is_empty() && loading.is_none();
         widget(cx)
             .child(widget_header_count("Needs you", rows.len(), cx))
@@ -558,7 +569,7 @@ impl HomeView {
         };
         widget(cx)
             .child(widget_header("Overview", None, cx))
-            .children(load_state(&self.data.stats, cx).map(|state| div().px_1().child(state)))
+            .children(load_state(&self.data.stats, self.service_ready, cx).map(|state| div().px_1().child(state)))
             .child(
                 div().grid().grid_cols(self.tile_columns()).gap_2().px_2().children(tiles.into_iter().map(|(value, label, detail)| {
                     stat_tile(value, label, cx).child(div().t_caption().text_color(t.text_secondary).truncate().child(detail))
@@ -649,7 +660,7 @@ impl HomeView {
                     .px_3()
                     .py_3()
                     .gap_3()
-                    .children(load_state(&self.data.stats, cx))
+                    .children(load_state(&self.data.stats, self.service_ready, cx))
                     .when(matches!(self.data.stats, Some(Ok(_))), |body| {
                         body.child(
                             div()
@@ -686,7 +697,7 @@ impl HomeView {
             .child(widget_header_count("Projects", self.projects().len(), cx))
             .child(
                 inset_body(cx)
-                    .children(load_state(&self.data.projects, cx))
+                    .children(load_state(&self.data.projects, self.service_ready, cx))
                     .children(empty.then(|| note("No projects yet.", cx)))
                     .children(rows),
             )
@@ -742,7 +753,7 @@ impl HomeView {
             .children(self.doc_error.clone().map(|error| div().px_4().pb_1().t_caption().text_color(theme::tokens(cx).danger).child(error)))
             .child(
                 inset_body(cx)
-                    .children(load_state(&self.data.documents, cx))
+                    .children(load_state(&self.data.documents, self.service_ready, cx))
                     .children(empty.then(|| note("No documents yet.", cx)))
                     .children(rows),
             )
@@ -767,7 +778,7 @@ impl HomeView {
             .child(widget_header("Recent activity", Some(format!("{count} events · {}", self.range.label()).into()), cx))
             .child(
                 inset_body(cx)
-                    .children(load_state(&self.data.activity, cx))
+                    .children(load_state(&self.data.activity, self.service_ready, cx))
                     .children((count == 0 && matches!(self.data.activity, Some(Ok(_)))).then(|| note("No activity in this range.", cx)))
                     .children(rows),
             )
@@ -776,7 +787,7 @@ impl HomeView {
 
 impl HomeView {
     fn render_refresh_error(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        let error = self.refresh_error.clone()?;
+        let error = self.refresh_error.clone().filter(|_| self.service_ready)?;
         let t = theme::tokens(cx);
         Some(
             div()
@@ -789,7 +800,7 @@ impl HomeView {
                 .bg(Tone::Danger.tint(cx, 0.10))
                 .t_label()
                 .text_color(t.text)
-                .child(div().flex_1().child(format!("Couldn't refresh Home; showing the last loaded data. {error}")))
+                .child(div().flex_1().min_w_0().child(format!("Couldn't refresh Home; showing the last loaded data. {error}")))
                 .child(
                     button_sm(Button::new("home-retry").outline().label("Retry"))
                         .loading(self.refreshing)
@@ -801,6 +812,7 @@ impl HomeView {
 
 impl Render for HomeView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.service_ready = self.state.service.read(cx).status().is_ready();
         let activity: &[Activity] = match &self.data.activity {
             Some(Ok(items)) => items,
             _ => &[],
@@ -851,7 +863,7 @@ impl Render for HomeView {
                                     Some(Ok(_)) => widget(cx).child(heatmap.render(&self.heatmap_scroll, cx)).into_any_element(),
                                     other => widget(cx)
                                         .child(widget_header("Activity", None, cx))
-                                        .child(inset_body(cx).children(load_state(other, cx)))
+                                        .child(inset_body(cx).children(load_state(other, self.service_ready, cx)))
                                         .into_any_element(),
                                 },
                                 self.render_overview(cx).into_any_element(),

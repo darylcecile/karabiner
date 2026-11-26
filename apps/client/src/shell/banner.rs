@@ -12,7 +12,8 @@ pub fn retry_button(id: &'static str) -> Button {
     button_sm(Button::new(id)).outline().label("Retry")
 }
 
-/// Status dot, optional medium title, truncated message, then `retry`. The 24pt Retry
+/// Status dot, optional medium title, message (wraps, so the action in it stays readable),
+/// then `retry`. The 24pt Retry
 /// sits 6pt from the top, bottom and trailing edge; text keeps the 12pt leading inset.
 pub fn banner(message: SharedString, title: Option<&'static str>, tone: Tone, retry: Button, cx: &App) -> Div {
     let t = theme::tokens(cx);
@@ -32,6 +33,6 @@ pub fn banner(message: SharedString, title: Option<&'static str>, tone: Tone, re
         .t_label()
         .child(status_dot(tone, cx))
         .when_some(title, |row, title| row.child(div().font_weight(FontWeight::MEDIUM).child(title)))
-        .child(div().flex_1().min_w_0().truncate().text_color(t.text_secondary).child(message))
+        .child(div().flex_1().min_w_0().text_color(t.text_secondary).child(message))
         .child(retry)
 }

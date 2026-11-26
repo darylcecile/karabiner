@@ -1,0 +1,11 @@
+{
+  "checks": {
+    "release-packaging": {
+      "command": "python3 .groundwork/scripts/release-packaging.py",
+      "expect": "The real macOS packaging helpers preserve app bundle layout, executable payload/mode, plist/version/exact tagged service URL, license notices and raw service checksum using an owned fixture without launching programs",
+      "kind": "workflow",
+      "paths": [".github/workflows/release.yml", ".github/scripts/package-client.sh", ".github/scripts/package-service.sh", ".groundwork/scripts/release-packaging.py", "apps/client/Cargo.toml", "apps/client/src/components/factory_canvas/NOTICE.md", "apps/client/assets/kubai/LICENSE"],
+      "result": "result.json"
+    }
+  }
+}

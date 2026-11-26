@@ -46,7 +46,11 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub fn from_env() -> anyhow::Result<Self> {
-        let base_url = std::env::var(BASE_URL_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.into());
+        // An explicit URL wins; otherwise the managed local service, on `KARABINER_PORT` if set.
+        let base_url = std::env::var(BASE_URL_ENV).unwrap_or_else(|_| match std::env::var("KARABINER_PORT") {
+            Ok(port) if port.parse::<u16>().is_ok() => format!("http://127.0.0.1:{port}"),
+            _ => DEFAULT_BASE_URL.into(),
+        });
         // No read timeout: reqwest's body timeout needs a Tokio reactor on the polling
         // thread, and bodies are read on GPUI's executors (it panics otherwise).
         let http = reqwest_client::ReqwestClient::user_agent(concat!("karabiner-client/", env!("CARGO_PKG_VERSION")))?;
@@ -80,6 +84,27 @@ impl ApiClient {
     pub async fn delete(&self, path: &str) -> ApiResult<()> {
         let bytes = self.request(Method::DELETE, path, None).await?;
         decode::<Deleted>(&bytes).map(|_| ())
+    }
+
+    /// GETs an absolute URL (a release asset), following redirects, reading at most `limit`
+    /// bytes. Used only for the managed service download.
+    pub async fn download(&self, url: &str, limit: u64) -> ApiResult<Vec<u8>> {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(url)
+            .body(AsyncBody::empty())
+            .map_err(|error| ApiError::Unavailable(error.to_string()))?;
+        let response = self.http.send(request).await.map_err(|error| ApiError::Unavailable(error.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ApiError::Status { status: status.as_u16(), body: None });
+        }
+        let mut bytes = Vec::new();
+        response.into_body().take(limit + 1).read_to_end(&mut bytes).await.map_err(|error| ApiError::Unavailable(error.to_string()))?;
+        if bytes.len() as u64 > limit {
+            return Err(ApiError::Decode(format!("download is larger than {limit} bytes")));
+        }
+        Ok(bytes)
     }
 
     /// Opens a server-sent events stream and returns its body unread, for incremental reads.

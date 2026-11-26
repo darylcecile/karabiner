@@ -1,5 +1,6 @@
 //! Shared client state handed to every feature view.
 
+mod bootstrap;
 pub mod service;
 pub mod tabs;
 

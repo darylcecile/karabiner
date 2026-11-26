@@ -1,0 +1,162 @@
+name: Build and release Karabiner
+
+on:
+  push:
+    tags: ['**']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact release tag to embed (manual runs never publish)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: karabiner-release-${{ github.ref }}-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_repository: ${{ steps.release.outputs.release_repository }}
+      service_url: ${{ steps.release.outputs.service_url }}
+    steps:
+      - name: Resolve the matching release assets
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          python3 - <<'PY'
+          import os, subprocess
+          from urllib.parse import quote
+
+          publishing = os.environ['GITHUB_EVENT_NAME'] == 'push'
+          repository = os.environ['GITHUB_REPOSITORY']
+          tag = os.environ['GITHUB_REF_NAME'] if publishing else os.environ.get('INPUT_TAG', '')
+          if not tag:
+              raise SystemExit('An exact release tag is required.')
+          subprocess.run(['git', 'check-ref-format', f'refs/tags/{tag}'], check=True)
+          url = f'https://github.com/{repository}/releases/download/{quote(tag, safe="")}/karabiner-service-macos-arm64'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'release_tag={tag}\nrelease_repository={repository}\nservice_url={url}\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'Build tag: `{tag}`\n\nService asset: `{url}`\n\n')
+              summary.write('Tag run: publish only after both builds succeed.\n' if publishing else 'Manual run: build artifacts only; no release publication.\n')
+          PY
+
+  client:
+    name: Build client
+    needs: metadata
+    runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      KARABINER_SERVICE_ASSET_URL: ${{ needs.metadata.outputs.service_url }}
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check the pinned native toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          rustup show
+          xcrun --sdk macosx --find metal
+          xcrun --sdk macosx --find metallib
+      - name: Check app and service packaging helpers
+        run: python3 .groundwork/scripts/release-packaging.py
+      - name: Build the release client
+        run: cargo build -p karabiner-client --bin karabiner --release --locked
+      - name: Package Karabiner.app
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[] | select(.name == "karabiner-client") | .version')
+          bash .github/scripts/package-client.sh target/release/karabiner "$version" dist
+      - name: Upload the client ZIP
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/Karabiner-macos-arm64.zip
+          archive: false
+          if-no-files-found: error
+
+  service:
+    name: Build service
+    needs: metadata
+    runs-on: macos-15
+    outputs:
+      binary_artifact_id: ${{ steps.binary.outputs.artifact-id }}
+      checksum_artifact_id: ${{ steps.checksum.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Check architecture and install dependencies
+        run: |
+          test "$(uname -m)" = arm64
+          bun install --frozen-lockfile
+      - name: Build and package the service
+        run: |
+          bun run build:service
+          bash .github/scripts/package-service.sh dist/karabiner-service dist
+      - name: Upload the raw service
+        id: binary
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/karabiner-service-macos-arm64
+          archive: false
+          if-no-files-found: error
+      - name: Upload the service checksum
+        id: checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/karabiner-service-macos-arm64.sha256
+          archive: false
+          if-no-files-found: error
+
+  publish:
+    name: Publish the complete release
+    if: github.event_name == 'push'
+    needs: [metadata, client, service]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.client.outputs.artifact_id }},${{ needs.service.outputs.binary_artifact_id }},${{ needs.service.outputs.checksum_artifact_id }}
+          path: release-assets
+          merge-multiple: true
+          skip-decompress: true
+      - name: Publish the client and its matching service
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ needs.metadata.outputs.release_repository }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+          test -s Karabiner-macos-arm64.zip
+          test -s karabiner-service-macos-arm64
+          sha256sum --check karabiner-service-macos-arm64.sha256
+          notes="$RUNNER_TEMP/karabiner-release-notes.md"
+          cat > "$notes" <<EOF
+          Download **Karabiner-macos-arm64.zip** for your Apple silicon Mac. Open Karabiner.app; it obtains and starts its matching service when needed. The raw service and checksum are for the app's automatic setup.
+
+          This preview is not notarized. macOS may require confirmation before opening it.
+
+          Built from $GITHUB_REPOSITORY at $GITHUB_SHA.
+          EOF
+          # With assets, gh creates a draft, uploads all files, then publishes. An upload
+          # failure leaves a draft; an existing release is not silently overwritten.
+          gh release create --repo "$RELEASE_REPOSITORY" --title "Karabiner $RELEASE_TAG" \
+            --notes-file "$notes" --verify-tag -- "$RELEASE_TAG" \
+            Karabiner-macos-arm64.zip \
+            karabiner-service-macos-arm64 \
+            karabiner-service-macos-arm64.sha256

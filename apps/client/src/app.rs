@@ -9,6 +9,7 @@ use gpui_kit::base::motion::{Transition, transition};
 use gpui_kit::base::{ResizeHandleContext, ResizeHandleState, resize_handle};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::component::{
+    Disableable as _,
     ActiveTheme as _,
     tooltip::Tooltip,
 };
@@ -381,12 +382,16 @@ impl AppShell {
     fn render_service_banner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let status = self.service.read(cx).status().clone();
         let message = status.message()?;
-        let title = match status {
-            ServiceStatus::Incompatible(_) => "Incompatible service",
-            _ => "Service unavailable",
+        let (title, tone) = match status {
+            ServiceStatus::Incompatible(_) => ("Incompatible service", Tone::Danger),
+            ServiceStatus::Starting(_) => ("Setting up", Tone::Running),
+            _ => ("Service unavailable", Tone::Danger),
         };
-        let retry = banner::retry_button("retry-service").on_click(cx.listener(|this, _, _, cx| this.refresh(cx)));
-        Some(banner::banner(message.into(), Some(title), Tone::Danger, retry, cx))
+        // While the managed setup runs, Retry shows progress instead of starting another.
+        let starting = matches!(status, ServiceStatus::Starting(_));
+        let retry = banner::retry_button("retry-service").loading(starting).disabled(starting)
+            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)));
+        Some(banner::banner(message.into(), Some(title), tone, retry, cx))
     }
 }
 
