@@ -61,4 +61,4 @@ Karabiner stores your project settings, tasks and history on your Mac. Your proj
 
 ---
 
-[Developer instructions](.groundwork/guides/project.md#development)
+[Contributor guide](CONTRIBUTING.md)
