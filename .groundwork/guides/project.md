@@ -103,7 +103,11 @@ Release builds reuse a compatible running local service, or verify/download and 
 
 The repository is public. Tag pushes publish to this repository using the publish job's `GITHUB_TOKEN` with `contents: write`; no extra token or credential is embedded or copied. The publish job waits for **both builds**. `gh release create` with attached assets creates a draft, uploads the complete asset set and then publishes it. A failed upload leaves a draft rather than a half-ready public release; an existing release is not overwritten automatically.
 
-`workflow_dispatch` is **build-only**, requires an exact `release_tag` to embed and never runs the publish job. Use it for bounded CI verification before tagging. Dispatch artifacts only auto-download a service when the embedded release asset is actually available; artifact creation itself does not publish that asset. Publication remains a separate, authorized tag action. As of the initial setup on November26, no release has been published; the README links the Releases page without claiming an existing download.
+`workflow_dispatch` is **build-only**, requires an exact `release_tag` to embed and never runs the publish job. Use it for bounded CI verification before tagging. Dispatch artifacts only auto-download a service when the embedded release asset is actually available; artifact creation itself does not publish that asset. Publication remains a separate, authorized tag action.
+
+[v0.1.0](https://github.com/darylcecile/karabiner/releases/tag/v0.1.0) is the first published release, built from `f6a5a9df91ff6d207637f90348472d674842e95c`. The [build-only CI run](https://github.com/darylcecile/karabiner/actions/runs/45738340434) and [tag publication run](https://github.com/darylcecile/karabiner/actions/runs/45740194226) both passed. All three release assets are publicly reachable; the README's latest-client link is for users, while each client keeps its service URL pinned to its exact release tag.
+
+The actual released bundle also passed an isolated empty-cache/database cold start on the existing Mac, without a service-URL or asset-URL override. It downloaded the public service, matched its published SHA-256 and reached native Ready/Home. This direct-driver proof is retained under `manual-evidence/client-managed-service-fpublic1-2026-11-26/`; it is not a formal Groundwork run or a fresh-machine/no-developer-tools claim. See the [feature matrix](factory-capabilities.md) for the exact artifact identities and retained earlier scopes.
 
 No Apple signing/notarization credentials are configured. Packaging creates a valid app bundle but does not claim notarization or add a signing-credential setup. The README describes the preview's macOS launch limitation. Existing React Flow and Kubai notices are included; no new icon artwork is generated.
 
@@ -122,6 +126,8 @@ The package helper takes a built executable and version, preserves executable mo
 ### Verification
 
 For static development checks, use `bun run typecheck`. The `release-packaging` check exercises the actual package helpers with synthetic executable files: plist/ZIP layout, executable mode, exact service URL, license notices and raw service checksum. It launches no app or service; actual compiled first-run behavior is separate native-bootstrap evidence.
+
+For a future explicit released-app check, `client-managed-public-release` reuses the existing driver with `MANAGED_PUBLIC` set to the downloaded release ZIP and `MANAGED_PUBLIC_SHA` set to the published service digest. It requires those inputs, uses an isolated port/cache/database and reports the released artifact's identity. The successful v0.1.0 public smoke was not rerun merely to register this check.
 
 See the [verification entry point](../VERIFY.md) and [factory journey](factory-runtime.md) to select relevant checks. Existing factory examples include `groundwork verify service-types service-roundtrip factory-runtime factory-integrations`; native graphical checks use an already-built client, Screen Recording/Accessibility permission and the owned fixture driver.
 

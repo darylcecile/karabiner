@@ -4,6 +4,20 @@ Status: accepted, 2026-11-26. Supersedes the "start the service yourself" setup 
 [client-service-boundary](client-service-boundary.md) for the default local service only; the
 client/service boundary (separate process, loopback HTTP, versioned API) is unchanged.
 
+Verification status: accepted, including the actual public packaged cold start. Release
+`v0.1.0` is public at source commit `f6a5a9df91ff6d207637f90348472d674842e95c`.
+The direct `fpublic1` observation ran the intact downloaded bundle with an isolated empty
+cache/database, using its embedded asset URL. It downloaded and verified the published service,
+started its owned process, reached native Ready/Home and returned API1/service0.1.0. Local
+managed-service/recovery cases and real build/publication CI retain their separate accepted scope.
+
+This cold state was on the existing Mac, not a brand-new machine or a machine without developer
+tools. The release's setup transient was too fast to capture; earlier debug progress/error visual
+proof remains separate. Canonical result, journey, metadata, service log, Info.plist, screenshots,
+hashes and the downloaded ZIP are retained at
+`manual-evidence/client-managed-service-fpublic1-2026-11-26/` in the repository's external
+Groundwork evidence namespace. This is a direct-driver result, not a formal Groundwork run.
+
 ## Decision
 
 End users download only the native client. When the default local service

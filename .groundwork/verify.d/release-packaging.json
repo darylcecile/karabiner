@@ -6,6 +6,15 @@
       "kind": "workflow",
       "paths": [".github/workflows/release.yml", ".github/scripts/package-client.sh", ".github/scripts/package-service.sh", ".groundwork/scripts/release-packaging.py", "apps/client/Cargo.toml", "apps/client/src/components/factory_canvas/NOTICE.md", "apps/client/assets/kubai/LICENSE"],
       "result": "result.json"
+    },
+    "client-managed-public-release": {
+      "command": "MANAGED_PUBLIC=\"${MANAGED_PUBLIC:?Set the downloaded release ZIP path}\" MANAGED_PUBLIC_SHA=\"${MANAGED_PUBLIC_SHA:?Set the published service SHA-256}\" zsh .groundwork/scripts/client-managed-service.sh",
+      "expect": "The supplied released app starts from an owned empty cache, uses its embedded public service URL without an asset-URL override, verifies/downloads/starts the service and reaches visible Ready with the published service digest; this exercises the released ZIP, not an arbitrary current-checkout build",
+      "kind": "ui",
+      "paths": [".github/workflows/release.yml", ".github/scripts/package-client.sh", ".github/scripts/package-service.sh", ".groundwork/scripts/client-managed-service.sh", ".groundwork/verify.d/release-packaging.json"],
+      "artifacts": ["journey.txt"],
+      "result": "result.json",
+      "context": { "fixture": "published-client-owned-cold-start", "artifactSource": "Caller-supplied release ZIP and expected published service SHA", "externalWrites": false }
     }
   }
 }

@@ -4,7 +4,7 @@ Karabiner helps you turn a software task into a plan, changes to your project an
 
 ## Get Karabiner
 
-Check [Releases](https://github.com/darylcecile/karabiner/releases) for available downloads. When a release is listed, download **Karabiner-macos-arm64.zip**—the client is the only download you need. If no release is listed, a packaged download has not been published yet.
+[**Download Karabiner for Apple silicon**](https://github.com/darylcecile/karabiner/releases/latest/download/Karabiner-macos-arm64.zip). The client is the only download you need; it sets up its matching background component automatically. See [Releases](https://github.com/darylcecile/karabiner/releases) for release notes.
 
 You will need:
 
@@ -21,7 +21,7 @@ The downloaded app is already built. You do not need developer tools to use it.
 
 The background component saves your work and manages tasks. Karabiner handles it for you; there is no second program to download or start manually. First-time setup needs an internet connection.
 
-This preview is not notarized. macOS may ask you to confirm opening it or may block it. Follow the message shown by macOS, or ask the maintainer for help with the preview.
+This preview is not Developer ID-signed or notarized. macOS may ask you to confirm opening it or may block it. Follow the message shown by macOS, or ask the maintainer for help with the preview.
 
 ## Set up your first project
 

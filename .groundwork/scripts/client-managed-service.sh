@@ -4,7 +4,9 @@
 #   KARABINER_PORT (free ephemeral), KARABINER_DB / KARABINER_SUPPORT_DIR (temp dirs),
 #   KARABINER_SERVICE_ASSET_URL (loopback asset fixture serving a service compiled here).
 # Only processes started here (app, asset server, the service it spawns on our port) are stopped.
-# Set MANAGED_PUBLIC=1 to run only the packaged first launch against the embedded public URL.
+# MANAGED_PUBLIC=<path to the released Karabiner .zip>: unzip it into owned temp and launch the bundle's
+# own executable in place, with only PORT/DB/SUPPORT_DIR set, so the embedded public URL is used.
+# MANAGED_PUBLIC_SHA=<published service sha256> is compared with the downloaded cache.
 #
 # Needs: built client (KARABINER_CLIENT_BIN), bun, cliclick, swift, Screen Recording + Accessibility.
 set -u
@@ -173,14 +175,26 @@ case_hung() { case_bad_start hang; }
 
 cd "$ROOT"
 : > "$EVIDENCE/journey.txt"
-[[ -x $CLIENT ]] || { echo "failed: client binary $CLIENT missing"; exit 1; }
-cp -p "$CLIENT" "$WORK/karabiner"; note "client $CLIENT sha256 $(shasum -a 256 "$WORK/karabiner" | cut -d' ' -f1)"; CLIENT=$WORK/karabiner
-note "owned port $PORT db $DB support $SUPPORT"
 if [[ -n ${MANAGED_PUBLIC:-} ]]; then
-  launch_public() { KARABINER_PORT=$PORT KARABINER_DB=$DB KARABINER_SUPPORT_DIR=$SUPPORT "$CLIENT" >> "$EVIDENCE/client.log" 2>&1 & APP_PID=$!; wait_until 20 find_window; front; resize 1280 800; }
-  launch_public; see_banner P01-setting-up "Setting up|Downloading|Starting" 20; ready P02-ready && pass "packaged client fetched the public release service and is ready" || fail "public first launch not ready"
-  ls -R "$SUPPORT" > "$EVIDENCE/state/support-public.txt"; quit_app
+  ditto -x -k "$MANAGED_PUBLIC" "$WORK/app" || { echo "failed: unzip $MANAGED_PUBLIC"; exit 1; }
+  APP=$(ls -d "$WORK"/app/*.app | head -1); EXE=$APP/Contents/MacOS/$(defaults read "$APP/Contents/Info" CFBundleExecutable)
+  note "zip sha256 $(shasum -a 256 "$MANAGED_PUBLIC" | cut -d' ' -f1); bundle $(defaults read "$APP/Contents/Info" CFBundleIdentifier) $(defaults read "$APP/Contents/Info" CFBundleShortVersionString); executable sha256 $(shasum -a 256 "$EXE" | cut -d' ' -f1)"
+  plutil -p "$APP/Contents/Info.plist" > "$EVIDENCE/state/Info.plist.txt"
+  note "owned port $PORT db $DB support $SUPPORT; cache before: $(find "$SUPPORT" -type f | wc -l | tr -d ' ') files"
+  env -u KARABINER_SERVICE_URL -u KARABINER_SERVICE_ASSET_URL KARABINER_PORT=$PORT KARABINER_DB=$DB KARABINER_SUPPORT_DIR=$SUPPORT "$EXE" >> "$EVIDENCE/client.log" 2>&1 &
+  APP_PID=$!; wait_until 20 find_window || fail "app window not found"; caffeinate -di -w $APP_PID & front; resize 1280 800; note "app pid $APP_PID ($EXE)"
+  see_banner P01-setting-up "Setting up|Downloading the Karabiner service|Starting the Karabiner service" 20 && pass "setup banner shown" || note "setup banner not captured"
+  if ready P02-ready; then pass "packaged client downloaded its pinned public service and reached Ready"; else fail "public first launch not ready (P02)"; fi
+  ls -lR "$SUPPORT" > "$EVIDENCE/state/support-public.txt"; cp "$SUPPORT"/logs/service.log "$EVIDENCE/state/service.log" 2>/dev/null
+  local_bin=$(find "$SUPPORT" -type f -name 'karabiner-service*' ! -name '*.sha256' | head -1)
+  got=$(shasum -a 256 "$local_bin" 2>/dev/null | cut -d' ' -f1); note "cached service $local_bin sha256 $got; owned service pid $(owned_service_pid)"
+  [[ -n ${MANAGED_PUBLIC_SHA:-} ]] && { [[ $got == $MANAGED_PUBLIC_SHA ]] && pass "cached service matches the published sha256" || fail "cached sha $got != published $MANAGED_PUBLIC_SHA"; }
+  curl -sf "http://127.0.0.1:$PORT/v1/meta" > "$EVIDENCE/state/meta.json" && pass "owned service answers /v1/meta"
+  quit_app; stop_owned_service
 else
+  [[ -x $CLIENT ]] || { echo "failed: client binary $CLIENT missing"; exit 1; }
+  cp -p "$CLIENT" "$WORK/karabiner"; note "client $CLIENT sha256 $(shasum -a 256 "$WORK/karabiner" | cut -d' ' -f1)"; CLIENT=$WORK/karabiner
+  note "owned port $PORT db $DB support $SUPPORT"
   build_service; start_assets
   for c in ${=MANAGED_CASES:-case_fresh case_quit_and_reuse case_offline_cache case_external case_bad_checksum case_download_failure case_early_exit case_hung}; do $c; done
 fi
