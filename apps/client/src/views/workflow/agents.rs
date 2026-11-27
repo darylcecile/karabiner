@@ -192,7 +192,7 @@ impl AgentsEditor {
                 model: String::new(),
                 instructions: String::new(),
                 skill_ids: Vec::new(),
-                mode: AgentMode::Interactive,
+                mode: AgentMode::Autonomous,
                 executable: None,
                 args: None,
                 instruction_ids: None,
@@ -292,6 +292,8 @@ impl AgentsEditor {
                         .on_click(cx.listener(|this, _, _, cx| this.edit_args(cx, |args| args.push(String::new())))))), cx)))))
             .child(components::form_section("Behavior", None, cx).pt_2().border_t_1().border_color(theme_tokens::tokens(cx).border))
             .child(ui::field("Mode", mode_control, cx))
+            .child(div().t_caption().text_color(cx.theme().muted_foreground).child(
+                "Autonomous runs tools without asking each time, within the selected execution target. Interactive pauses for permissions and questions. Workflow approval steps still wait for you."))
             .child(ui::field("Skills", div().flex().flex_col().gap_1()
                 .when(config.skills.is_empty(), |this| this.child(div().t_caption().text_color(cx.theme().muted_foreground).child("No skills in this project yet.")))
                 .children(config.skills.iter().map(|skill| {
@@ -339,6 +341,7 @@ impl AgentsEditor {
         let result = self.readiness.as_ref().filter(|(id, _)| *id == agent.id).map(|(_, result)| result.clone());
         let muted = cx.theme().muted_foreground;
         let yes_no = |value: Option<bool>, yes: &'static str, no: &'static str, unknown: &'static str| match value { Some(true) => yes, Some(false) => no, None => unknown };
+        let interactive = agent.mode == AgentMode::Interactive;
         let checked = agent.clone();
         let body = result.map(|result| match result {
             Err(error) => div().t_caption().text_color(muted).child(error).into_any_element(),
@@ -349,8 +352,13 @@ impl AgentsEditor {
                     _ => "",
                 };
                 let support = readiness.supported.map(|support| super::join_parts(&[
-                    if support.permissions { "asks permission in the app" } else { "no in-app permission prompts" },
-                    if support.questions { "can ask questions" } else { "" },
+                    match (&agent.mode, support.permissions) {
+                        (AgentMode::Autonomous, _) => "tools run without permission prompts",
+                        (AgentMode::Interactive, true) => "asks permission in the app",
+                        (AgentMode::Interactive, false) => "no in-app permission prompts",
+                        _ => "mode not supported by this app",
+                    },
+                    if interactive && support.questions { "can ask questions" } else { "" },
                     match support.steering.as_str() { "native-turn" => "takes live guidance", "native-tool-boundary" => "takes guidance at tool calls", _ => "takes guidance between steps" },
                 ]));
                 div().flex().flex_col().gap_1()

@@ -81,7 +81,14 @@ launch() {   # launch [external-url]
   APP_PID=$!; wait_until 20 find_window || { fail "app window not found"; return 1; }
   caffeinate -di -w $APP_PID & front; resize 1280 800; note "app pid $APP_PID"
 }
-quit_app() { osascript -e "tell application \"System Events\" to keystroke \"q\" using {command down}"; wait_until 10 eval '! kill -0 $APP_PID 2>/dev/null' || kill $APP_PID; APP_PID=; }
+quit_app() {
+  [[ -n $APP_PID ]] || return 0
+  # Request normal quit on the owned PID, independently of the foreground app.
+  osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSRunningApplication.runningApplicationWithProcessIdentifier($APP_PID).terminate" >/dev/null
+  wait_until 10 eval '! kill -0 $APP_PID 2>/dev/null' || { note "normal quit timed out; sending TERM to owned app pid $APP_PID"; kill "$APP_PID" 2>/dev/null; }
+  wait_until 10 eval '! kill -0 $APP_PID 2>/dev/null' || { fail "owned app $APP_PID did not stop"; exit 1; }
+  APP_PID=
+}
 service_pid() { owned_service_pid; }
 port_listening() { lsof -tiTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; }
 meta_ok() { curl -sf "http://127.0.0.1:$PORT/v1/meta" > /dev/null; }

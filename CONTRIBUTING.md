@@ -9,32 +9,32 @@ Use **Bun 1.3.14** from [`package.json`](package.json) and **Rust 1.100.0** from
 Clone your fork or this repository, then run from the repository root:
 
 ```sh
-bun install --frozen-lockfile
+bun run dev
 ```
 
-Keep development data separate from the installed app. In **terminal 1**, start a service on a development port with a database under the ignored `.groundwork/tmp/` directory:
+The launcher installs locked Bun dependencies, incrementally builds the native client with the pinned Rust toolchain and `--locked`, waits for a compatible service, then opens the app. You can also run `./scripts/dev.sh` directly; it reports missing prerequisites, including Bun. The first native build can take several minutes. Cargo's configured target directory (including `CARGO_TARGET_DIR`) is respected.
+
+Development defaults are `http://127.0.0.1:43174` and the persistent, ignored `.groundwork/tmp/dev/karabiner.sqlite`, separate from the installed app. Service/client logs append to `.groundwork/tmp/dev/service.log` and `client.log`; build diagnostics appear in the terminal.
+
+Quit the app or press **Ctrl-C** in the launcher terminal to stop the app and the service it started. After source changes, stop and rerun `bun run dev` to rebuild; there is no hot reload. Rerunning preserves your database and configuration.
+
+Optional overrides:
 
 ```sh
-mkdir -p .groundwork/tmp/dev
-bun run service --port 43174 --db "$PWD/.groundwork/tmp/dev/karabiner.sqlite"
+KARABINER_PORT=43175 KARABINER_DB="$PWD/.groundwork/tmp/other.sqlite" bun run dev
+# Reuse a service you manage yourself:
+KARABINER_SERVICE_URL=http://127.0.0.1:43174 bun run dev
 ```
 
-Wait for its `ready` message. In **terminal 2**, also at the repository root:
+An already-compatible service on the selected port is reused and left running when the launcher exits. Its existing database/logs remain in use; `KARABINER_DB` applies only when the launcher starts a service. An explicit `KARABINER_SERVICE_URL` takes precedence over port/database settings and must already be available with API major 1. An incompatible occupied port is reported rather than replaced. The client always receives an explicit URL, so it does not download or start another service.
 
-```sh
-KARABINER_SERVICE_URL=http://127.0.0.1:43174 \
-  cargo run -p karabiner-client --bin karabiner --locked
-```
-
-Both commands stay in the foreground. The explicit `KARABINER_SERVICE_URL` makes this an externally managed development service, so the client does not download or start another one. Ordinary source builds without an embedded release URL also use manual service setup.
-
-For the CLI, use a **third terminal** and the same development endpoint:
+For the CLI, use another terminal and the same development endpoint:
 
 ```sh
 KARABINER_SERVICE_URL=http://127.0.0.1:43174 bun run cli status --json
 ```
 
-If the port is occupied, choose another and update both client commands, or reuse your existing development service. Stop your dev service with **Ctrl-C** in its terminal. Preserve any running installed app/service, its data and its sign-in state.
+The launcher does not sign in to providers or seed sample data. Configure the app normally using your existing tools/accounts. Preserve any running installed app/service, its data and its sign-in state.
 
 See the [development guide](.groundwork/guides/project.md#development) for detailed setup, configuration, CLI usage and standalone build commands.
 

@@ -59,15 +59,34 @@ export async function interact(
 	input: AdapterInteraction,
 	signal = request.signal,
 ): Promise<AdapterAnswer> {
-	if (!request.interact)
-		throw new Error(`${input.provider} needs the runtime interaction bridge for ${input.kind}`);
+	const activeSignal = AbortSignal.any([request.signal, signal]);
+	activeSignal.throwIfAborted();
 
 	if (input.kind === "question" && request.agent.mode !== "interactive")
 		throw new Error(
 			"This agent is autonomous; agent-origin questions require interactive mode",
 		);
 
-	return waitWithSignal(request.interact(input, signal), signal);
+	if (input.kind === "permission" && request.agent.mode === "autonomous") {
+		if (input.fields?.length)
+			throw new Error("Permission requests needing form input require interactive mode");
+
+		const approval = input.choices?.find((choice) => choice.effect === "approve");
+		if (!approval) throw new Error(`${input.provider} did not offer a permission approval`);
+
+		request.emit({
+			kind: "activity",
+			text: `Autonomous mode approved ${input.provider} permission: ${input.prompt}`,
+			toolId: input.id,
+		});
+
+		return { choice: approval.id };
+	}
+
+	if (!request.interact)
+		throw new Error(`${input.provider} needs the runtime interaction bridge for ${input.kind}`);
+
+	return waitWithSignal(request.interact(input, activeSignal), activeSignal);
 }
 
 /** Delivery resolves only on a provider acknowledgement; closing leaves unconsumed guidance pending. */
@@ -96,6 +115,9 @@ export function bridgePrompt(request: AdapterRequest): string {
 		request.instructions,
 		...request.skills.map((skill) => `# Skill: ${skill.name}\n${skill.content}`),
 		resultInstructions(true),
+		request.agent.mode === "autonomous"
+			? "You are running autonomously. Tool permission requests are approved by the configured agent mode. Do not ask the user questions or request form input. If essential information is unavailable, report a concrete blocked result instead of waiting for human input."
+			: "",
 		request.prompt,
 	]
 		.filter(Boolean)

@@ -28,13 +28,14 @@ if (provider === "mxc") {
 }
 
 function startPeer() {
+  const autonomous = process.argv[process.argv.indexOf("--fixture-case") + 1] === "autonomous";
   let sessionId = "fixture-session", turnId = "fixture-turn", sequence = 0, aborted = false;
   let runRequest: Frame | undefined, firstUuid = "";
   let guidance: string | undefined;
   let guidanceDone!: () => void;
   const gotGuidance = new Promise<void>((resolve) => { guidanceDone = resolve; });
   const pending = new Map<string, (value: any) => void>();
-  const outcome = (kind = "complete") => ({ outcome: kind, summary: kind === "blocked" ? "Operator denied the owned fixture effect" : `Observed native approval and ${guidance}`, returnToStageId: null, question: null });
+  const outcome = (kind = "complete") => ({ outcome: kind, summary: kind === "blocked" ? "Operator denied the owned fixture effect" : `Observed native approval and ${guidance ?? "autonomous completion"}`, returnToStageId: null, question: null });
   const send = (frame: Frame) => {
     const text = JSON.stringify(frame);
     process.stdout.write(provider === "copilot" ? `Content-Length: ${Buffer.byteLength(text)}\r\n\r\n${text}` : `${text}\n`);
@@ -99,7 +100,7 @@ function startPeer() {
   const form = async () => {
     const schema = { type: "object", properties: { count: { type: "integer", minimum: 1, maximum: 5, title: "Count" }, enabled: { type: "boolean", title: "Enabled" }, tags: { type: "array", minItems: 1, maxItems: 2, items: { type: "string", enum: ["a", "b"] } } }, required: ["count", "enabled", "tags"] };
     let response: any;
-    if (provider === "claude") response = await ask("elicitation", { mcp_server_name: "fixture", message: "Typed fixture fields", mode: "form", requested_schema: schema });
+    if (provider === "claude") response = await ask("elicitation", { mcp_server_name: "fixture", title: "Fixture permission form", message: "Typed fixture fields", mode: "form", requested_schema: schema });
     if (provider === "codex") response = await ask("mcpServer/elicitation/request", { serverName: "fixture", message: "Typed fixture fields", mode: "form", requestedSchema: schema });
     if (provider === "copilot") response = await broadcastAsk("elicitation.requested", { message: "Typed fixture fields", mode: "form", requestedSchema: schema });
     if (provider === "custom") response = await ask("question", { prompt: "Typed fixture fields", choices: [{ id: "accept", label: "Accept" }], fields: [{ id: "count", label: "Count", type: "integer", minimum: 1, maximum: 5, required: true }, { id: "enabled", label: "Enabled", type: "boolean", required: true }, { id: "tags", label: "Tags", type: "multiselect", options: [{ id: "a", label: "a" }, { id: "b", label: "b" }], minItems: 1, maxItems: 2, required: true }] });
@@ -116,9 +117,18 @@ function startPeer() {
     log("question-response", response);
   };
   const run = async () => {
+    if (autonomous && provider === "copilot") {
+      const path = join(process.cwd(), "README.md");
+      const response = await broadcastAsk("permission.requested", { permissionRequest: { kind: "read", toolCallId: "tool-read", path, intention: "Read owned README" } });
+      log("permission-response", { kind: "read", response });
+      if (response?.kind !== "approve-once") { finish("blocked"); return; }
+      if (aborted) return;
+      log("read-effect", { path, content: readFileSync(path, "utf8") });
+    }
     if (!await permission("write")) { finish("blocked"); return; }
     if (!await permission("shell")) { finish("blocked"); return; }
     if (!await permission("network")) { finish("blocked"); return; }
+    if (autonomous) { finish(); return; }
     await form(); await question(); await gotGuidance; finish();
   };
   const begin = (frame: Frame) => { runRequest = frame; void run().catch((error) => { log("scenario-error", String(error)); finish("blocked"); }); };

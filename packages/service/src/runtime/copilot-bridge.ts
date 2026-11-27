@@ -37,6 +37,13 @@ const humanDecision = {
 
 export function copilotPermissionHandler(request: AdapterRequest): PermissionHandler {
 	return async (permission) => {
+		request.signal.throwIfAborted();
+
+		if (request.agent.mode === "autonomous" && permission.managedApprovalRequired)
+			throw new Error(
+				"Copilot requires human approval for this request; use interactive mode",
+			);
+
 		const details = object(permission);
 
 		const response = await interact(request, {
@@ -59,8 +66,18 @@ export function copilotPermissionHandler(request: AdapterRequest): PermissionHan
 
 		if (response.choice === "approve-once")
 			return createAttributedResult(
-				{ kind: "approve-once", approvedInteractively: true },
-				humanDecision,
+				{
+					kind: "approve-once",
+					approvedInteractively: request.agent.mode === "interactive",
+				},
+				request.agent.mode === "autonomous"
+					? {
+							source: "host_policy",
+							responseCapability: "headless",
+							surface: "sdk",
+							outcome: "auto_approved",
+						}
+					: humanDecision,
 			);
 
 		if (response.choice !== "reject")

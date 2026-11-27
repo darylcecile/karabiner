@@ -21,30 +21,37 @@ The local Rust workspace dependencies are included in this checkout. Cargo downl
 ```sh
 git clone https://github.com/darylcecile/karabiner.git
 cd karabiner
-bun install --frozen-lockfile
+bun run dev
 ```
 
 ### Run from source
 
-From the repository root, start the foreground service in terminal 1:
+From the repository root:
 
 ```sh
-bun run service
+bun run dev
 ```
 
-Wait for its JSON `ready` message. The default listener is `http://127.0.0.1:43173`. Reuse an existing service instance and its URL when one is already running.
+[`scripts/dev.sh`](../../scripts/dev.sh) checks prerequisites, runs `bun install --frozen-lockfile`, incrementally builds the native client with the pinned Rust toolchain and `--locked`, then starts a development service and waits up to 30 seconds for `/v1/meta` with API major 1 before launching the client. Run `./scripts/dev.sh` directly to get prerequisite diagnostics even when Bun is missing. The first build can take several minutes; Cargo's target-directory configuration, including `CARGO_TARGET_DIR`, is respected.
 
-In terminal 2, also at the repository root:
+The command remains in the foreground. Quit the app or press **Ctrl-C** in that terminal to stop its owned app/service processes. Build/start failures also clean up owned processes. After source changes, stop and rerun the command to rebuild; there is no hot reload. Each run preserves your existing development database and configuration.
+
+The launcher defaults to `http://127.0.0.1:43174` and `.groundwork/tmp/dev/karabiner.sqlite`, keeping development separate from the installed app. Service and client logs append to `.groundwork/tmp/dev/service.log` and `.groundwork/tmp/dev/client.log`; build diagnostics stay in the terminal.
+
+Optional overrides:
 
 ```sh
-cargo run -p karabiner-client --bin karabiner --locked
+KARABINER_PORT=43175 KARABINER_DB="$PWD/.groundwork/tmp/other.sqlite" bun run dev
+KARABINER_SERVICE_URL=http://127.0.0.1:43174 bun run dev
 ```
 
-Cargo compiles and launches the native app. The command remains in the foreground; use a third terminal for CLI commands. The app shows an unavailable/incompatible banner with Retry when it cannot use the service. Close the app window after resolving unsaved changes; Ctrl-C in terminal 1 shuts down the service cleanly. Cancel active work explicitly if you intend to stop it.
+A compatible service already on the selected port is reused and stays running after the launcher exits. Its database/logs remain controlled by that service, so `KARABINER_DB` is not applied. An explicit `KARABINER_SERVICE_URL` takes precedence over port/database settings and must already be available with API major 1. An incompatible occupied port is reported rather than replaced. The client always gets an explicit service URL, opting out of automatic service download/start (see the [managed-service decision](../decisions/managed-local-service.md)). No login, sample-data seeding or system service installation is performed.
+
+To run the components separately, use `bun run service --port 43174 --db "$PWD/.groundwork/tmp/dev/karabiner.sqlite"` in one terminal, then `KARABINER_SERVICE_URL=http://127.0.0.1:43174 cargo run -p karabiner-client --bin karabiner --locked` in another. Resolve unsaved changes and cancel active work before stopping a session.
 
 ### Persistence and connection settings
 
-Default service-owned database:
+The development launcher uses the persistent `.groundwork/tmp/dev/karabiner.sqlite`. Running `bun run service` without overrides instead uses the installed-app default:
 
 ```text
 ~/Library/Application Support/Karabiner/karabiner.sqlite
@@ -58,9 +65,10 @@ Installed agent executables must be on the service process's `PATH` and use thei
 
 ### CLI and API
 
-While the service is running, use terminal 3 at the repository root. Replace uppercase placeholders with IDs returned by the list commands:
+While the service is running, use another terminal at the repository root. Set the same endpoint as the launcher and replace uppercase placeholders with IDs returned by the list commands:
 
 ```sh
+export KARABINER_SERVICE_URL=http://127.0.0.1:43174
 bun run cli status --json
 bun run cli project list --json
 bun run cli task list --project PROJECT_ID --json

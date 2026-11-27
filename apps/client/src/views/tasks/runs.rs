@@ -343,9 +343,9 @@ impl RunsPanel {
                         .children(stage.agents.first().map(|(name, _)| div().ml_auto().child(name.clone())))
                 })))
             })
-            .child(div().flex().items_center().justify_between().gap_2()
-                .child(div().t_caption().text_color(cx.theme().muted_foreground)
-                    .children(self.start_note.clone()))
+            .children(self.start_note.clone().map(|note| div().w_full().min_w_0().whitespace_normal()
+                .t_caption().text_color(cx.theme().muted_foreground).child(note)))
+            .child(div().flex().justify_end()
                 .child(Button::new("start-run").small().t_label().icon(IconName::Play).label("Start run").loading(self.starting)
                     .on_click(cx.listener(|this, _, _, cx| this.start(cx)))))
     }

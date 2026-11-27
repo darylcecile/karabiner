@@ -28,10 +28,13 @@ pub enum Outcome {
 impl Outcome {
     pub const ALL: [Outcome; 3] = [Outcome::Success, Outcome::Failure, Outcome::Return];
 
-    /// Graphs read left to right: the single input is on the node's left edge and every
-    /// outcome leaves from the right edge (React Flow's `Position.Left` / `Position.Right`).
+    /// Graphs read left to right: forward outcomes leave from the right edge, while return
+    /// (back to an earlier node) leaves from the left edge, above the single input.
     pub fn side(self) -> Side {
-        Side::Right
+        match self {
+            Outcome::Return => Side::Left,
+            Outcome::Success | Outcome::Failure => Side::Right,
+        }
     }
 
     /// Vertical offset of this outcome's handle from the node's middle, in flow units:
@@ -227,7 +230,7 @@ enum Gesture {
     Idle,
     Pan { last: Xy },
     Move { start: Xy, pointer: Xy, origins: Vec<(SharedString, Xy)>, moved: bool },
-    Connect { source: SharedString, outcome: Outcome, reconnect: Option<SharedString>, cursor: Xy },
+    Connect { source: SharedString, outcome: Outcome, reconnect: Option<SharedString>, start: Xy, cursor: Xy },
     /// Dragging the source end of `edge`; its target stays fixed.
     ReconnectSource { edge: SharedString, outcome: Outcome, target: SharedString, cursor: Xy },
     Minimap,
@@ -285,6 +288,7 @@ pub(crate) fn handle_point(node: &CanvasNode, outcome: Option<Outcome>) -> Xy {
     let r = node_rect(node);
     let middle = r.y + r.height / 2.;
     match outcome {
+        Some(outcome) if outcome.side() == Side::Left => xy(r.x, middle + outcome.slot()),
         Some(outcome) => xy(r.x + r.width, middle + outcome.slot()),
         None => xy(r.x, middle),
     }
@@ -467,7 +471,7 @@ impl FactoryCanvas {
         let target = self.graph.nodes.iter().find(|n| n.id == edge.target)?;
         let from = self.viewport.to_screen(handle_point(source, Some(edge.outcome)));
         let to = self.viewport.to_screen(handle_point(target, None));
-        Some(xyflow::bezier(from, edge.outcome.side(), to, Side::Left))
+        Some(xyflow::bezier(from, edge.outcome.side(), to, Side::Left, self.viewport.zoom))
     }
 
     fn edge_at(&self, local: Xy) -> Option<SharedString> {
@@ -545,7 +549,8 @@ impl FactoryCanvas {
         if self.locked {
             return;
         }
-        self.gesture = Gesture::Connect { source, outcome, reconnect, cursor: self.local(event.position) };
+        let start = self.local(event.position);
+        self.gesture = Gesture::Connect { source, outcome, reconnect, start, cursor: start };
         cx.notify();
     }
 
@@ -601,7 +606,9 @@ impl FactoryCanvas {
                     .collect();
                 cx.emit(CanvasEvent::NodesMoved(moved));
             }
-            Gesture::Connect { source, outcome, reconnect, cursor } => self.finish_connect(source, outcome, reconnect, cursor, cx),
+            // A click without a drag never connects (the return handle sits within snapping range of
+            // its own input). Same 1px threshold as node drags.
+            Gesture::Connect { source, outcome, reconnect, start, cursor } if (cursor.x - start.x).abs().max((cursor.y - start.y).abs()) >= 1. => self.finish_connect(source, outcome, reconnect, cursor, cx),
             Gesture::ReconnectSource { edge, outcome, target, cursor } => self.finish_source_reconnect(edge, outcome, target, cursor, cx),
             Gesture::Marquee { start, cursor } => self.finish_marquee(start, cursor, cx),
             _ => {}

@@ -175,14 +175,31 @@ pub struct Bezier {
 }
 
 /// `getBezierPath` with React Flow's default curvature 0.25.
-pub fn bezier(from: Xy, from_side: Side, to: Xy, to_side: Side) -> Bezier {
+pub fn bezier(from: Xy, from_side: Side, to: Xy, to_side: Side, zoom: f32) -> Bezier {
     const CURVATURE: f32 = 0.25;
+    if from_side == to_side && matches!(from_side, Side::Left | Side::Right) {
+        return same_side_loop(from, from_side, to, zoom);
+    }
     Bezier {
         from,
         c1: control_with_curvature(from_side, from, to, CURVATURE),
         c2: control_with_curvature(to_side, to, from, CURVATURE),
         to,
     }
+}
+
+/// Karabiner addition (not React Flow): `getBezierPath` degenerates when both handles face
+/// the same way (a self-return becomes a flat line along the border, and a return to an
+/// earlier node runs through the nodes between). Each control reaches outward past its own
+/// handle and above the row, so the edge arcs over it and enters from the outside.
+fn same_side_loop(from: Xy, side: Side, to: Xy, zoom: f32) -> Bezier {
+    // Flow-space sizes, scaled like the nodes so the loop never reaches a neighbour column.
+    let (reach, lift) = (40. * zoom, 48. * zoom);
+    let out = if side == Side::Left { -reach } else { reach };
+    // A self-return (handles stacked on one border) would collapse to a spike; swing out
+    // around them instead so the loop stays visibly outside the node.
+    let drop = if (from.x - to.x).abs() < reach { lift } else { -lift };
+    Bezier { from, c1: xy(from.x + out, from.y - lift), c2: xy(to.x + out, to.y + drop), to }
 }
 
 impl Bezier {
@@ -263,7 +280,7 @@ mod tests {
     fn bezier_matches_react_flow_vertical_edge() {
         // getBezierPath({sourceX:0,sourceY:0,Bottom,targetX:100,targetY:100,Top}) →
         // "M0,0 C0,50 100,50 100,100", label at (50, 50).
-        let curve = bezier(xy(0., 0.), Side::Bottom, xy(100., 100.), Side::Top);
+        let curve = bezier(xy(0., 0.), Side::Bottom, xy(100., 100.), Side::Top, 1.);
         assert_eq!((curve.c1, curve.c2), (xy(0., 50.), xy(100., 50.)));
         assert_eq!(curve.center(), xy(50., 50.));
     }

@@ -4,6 +4,7 @@
   "packageManager": "bun@1.3.14",
   "workspaces": ["packages/*"],
   "scripts": {
+    "dev": "bash scripts/dev.sh",
     "service": "bun packages/service/src/main.ts",
     "cli": "bun packages/cli/src/main.ts",
     "typecheck": "tsc --noEmit",

@@ -158,7 +158,7 @@ impl FactoryCanvas {
             Some(target) => (self.viewport.to_screen(handle_point(target, None)), Side::Left),
             None => (cursor, opposite(outcome.side())),
         };
-        Some(xyflow::bezier(from, outcome.side(), to, side))
+        Some(xyflow::bezier(from, outcome.side(), to, side, self.viewport.zoom))
     }
 
     /// Connection line while dragging an edge's source end: pointer (or snapped source
@@ -170,8 +170,8 @@ impl FactoryCanvas {
             let source = self.graph.nodes.iter().find(|n| n.id == id)?;
             Some((self.viewport.to_screen(handle_point(source, Some(outcome))), outcome.side()))
         });
-        let (from, side) = snapped.unwrap_or((cursor, Side::Right));
-        Some(xyflow::bezier(from, side, to, Side::Left))
+        let (from, side) = snapped.unwrap_or((cursor, outcome.side()));
+        Some(xyflow::bezier(from, side, to, Side::Left, self.viewport.zoom))
     }
 
     fn snapped_target(&self, cursor: Xy) -> Option<&CanvasNode> {

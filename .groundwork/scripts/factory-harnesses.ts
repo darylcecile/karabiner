@@ -6,13 +6,15 @@ import type { AgentDefinition, HarnessReadiness, RunQuestion, StoredRun } from "
 import { alive, FixtureApi, folder, waitFor, wireLog } from "./fixtures/native-harness-api.ts";
 import { verifyNativeStrands } from "./fixtures/native-harness-strands.ts";
 import { verifyLiveCopilot } from "./fixtures/native-harness-live.ts";
-import type { AgentOutcome } from "../../packages/service/src/runtime/adapter-types.ts";
+import type { AdapterInteraction, AdapterRequest, AgentOutcome } from "../../packages/service/src/runtime/adapter-types.ts";
+import { interact } from "../../packages/service/src/runtime/bridge-common.ts";
+import { copilotPermissionHandler } from "../../packages/service/src/runtime/copilot-bridge.ts";
 
 type Provider = "claude" | "codex" | "copilot" | "custom";
 type CaseMode = "approve" | "deny" | "cancel" | "cleanup-failure";
 const providers = ["claude", "codex", "copilot", "custom"] as const;
 const selectedCases = new Set<string>();
-const knownCases = new Set([...providers.flatMap((provider) => ["approve", "deny", "cancel"].map((mode) => `${provider}-${mode}`)), "copilot-cleanup-failure", "copilot-readiness"]);
+const knownCases = new Set([...providers.flatMap((provider) => ["approve", "deny", "cancel", "autonomous"].map((mode) => `${provider}-${mode}`)), "copilot-cleanup-failure", "copilot-readiness", "permission-policy", "strands-autonomous"]);
 for (let index = 2; index < process.argv.length; index++) if (process.argv[index] === "--case") {
   const name = process.argv[++index];
   if (!name || !knownCases.has(name)) throw new Error(`Unknown or missing --case: ${name ?? ""}`);
@@ -107,6 +109,57 @@ async function answer(run: StoredRun, question: RunQuestion, mode: string, inval
   return api.call(path, "POST", Object.keys(values).length ? { value: values } : { answer: "Answer exactly" });
 }
 
+async function permissionPolicy() {
+  const events: unknown[] = [];
+  const request: AdapterRequest = {
+    agent: { id: "policy", name: "Policy", harness: "custom", role: "fixture", mode: "autonomous", model: "fixture", instructions: "", skillIds: [] },
+    prompt: "", instructions: "", skills: [], rootPath: temporary, runId: "policy", stepId: "policy", timeoutMs: 1_000,
+    signal: new AbortController().signal,
+    launch: async () => { throw new Error("Policy fixture does not launch a process"); },
+    emit: (event) => events.push(event),
+  };
+  const permission: AdapterInteraction = { id: "offered-tool", provider: "custom", kind: "permission", prompt: "Allow owned tool?", choices: [{ id: "stop", label: "Deny", effect: "deny" }, { id: "provider-specific-allow", label: "Allow", effect: "approve" }] };
+  for (const executionTarget of ["host", "mxc", "apple-container"] as const) {
+    assert.deepEqual(await interact({ ...request, executionTarget }, permission), { choice: "provider-specific-allow" });
+  }
+  assert.equal(events.length, 3);
+  await assert.rejects(interact(request, { ...permission, kind: "question" }), /questions require interactive mode/);
+  await assert.rejects(interact(request, { ...permission, fields: [{ id: "value", label: "Required input", type: "text", required: true }] }), /form input require interactive mode/);
+  await assert.rejects(interact(request, { ...permission, choices: [permission.choices![0]!] }), /did not offer a permission approval/);
+  const cancelled = AbortSignal.abort(new Error("Owned invocation cancelled"));
+  await assert.rejects(interact({ ...request, signal: cancelled }, permission), /Owned invocation cancelled/);
+  await assert.rejects(interact(request, permission, cancelled), /Owned invocation cancelled/);
+  await assert.rejects(async () => copilotPermissionHandler(request)({ kind: "read", path: join(temporary, "README.md"), intention: "Managed permission", managedApprovalRequired: true }, { sessionId: "policy" }), /Copilot requires human approval/);
+  observations.push({ id: "permission-policy", observed: "Autonomous mode selects an offered approval on every target; cancelled requests and human input fail explicitly before entering a waiter", details: { events } });
+}
+
+async function autonomousJourney(provider: Provider, path: string) {
+  const id = `${provider}-autonomous`;
+  const directory = await folder(join(temporary, id)); roots.push(directory);
+  const agent: AgentDefinition = { id: provider, name: id, role: "developer", harness: provider, model: "fixture-local", executable: path, args: ["--fixture-case", "autonomous"], protocol: provider === "custom" ? "jsonrpc-v2" : undefined, mode: "autonomous", skillIds: [], instructions: "Use the controlled native protocol only." };
+  const { task } = await api.project(directory, agent);
+  const started = await api.call<StoredRun>(`/v1/tasks/${task.id}/run`, "POST", {});
+  caseRuns.set(id, started.id);
+  const current = await waitFor("autonomous native completion", () => api.run(started.id), (run) => {
+    assert.equal(run.questions.length, 0, "Autonomous permissions never create a human waiter");
+    return ["completed", "failed", "cancelled"].includes(run.state);
+  });
+  assert.equal(current.state, "completed", JSON.stringify(current));
+  assert.equal(current.stages![0]!.steps[0]!.attempts!.length, 1);
+  for (const kind of ["write", "shell", "network"]) assert.equal(await readFile(join(directory, `effect-${kind}.txt`), "utf8"), "native effect\n");
+  const log = await waitFor("autonomous provider cleanup", () => wireLog(directory), (rows) => rows.filter((row) => row.event === "started").every((row) => !alive(row.pid)));
+  if (provider === "copilot") {
+    const receipts = log.filter((row) => row.event === "received" && row.data.method === "session.permissions.handlePendingPermissionRequest");
+    assert.equal(receipts.length, 4);
+    for (const receipt of receipts) {
+      assert.deepEqual(receipt.data.params.result, { kind: "approve-once", approvedInteractively: false });
+      assert.deepEqual(receipt.data.params.decisionContext, { source: "host_policy", responseCapability: "headless", surface: "sdk", outcome: "auto_approved" });
+    }
+    assert.ok(log.some((row) => row.event === "read-effect" && row.data.content === "Owned native harness fixture\n"), "Copilot reads README through its automatic permission receipt");
+  }
+  observations.push({ id, observed: `${provider} autonomous mode completes actual owned effects through its native permission channel with no human answers`, details: { run: current, log } });
+}
+
 async function providerJourney(provider: Provider, mode: CaseMode, path: string, mxc: string) {
   const effectsComplete = mode === "approve" || mode === "cleanup-failure";
   const directory = await folder(join(temporary, `${provider}-${mode}`)); roots.push(directory);
@@ -161,6 +214,10 @@ async function providerJourney(provider: Provider, mode: CaseMode, path: string,
       assert.equal(log.filter((row) => row.event === "effect").length, 3);
       assert.equal(log.filter((row) => row.event === "finished").length, 1);
       assert.equal(current.tokens, 7, "Provider-reported usage survives cleanup handling");
+      for (const receipt of log.filter((row) => row.event === "received" && row.data.method === "session.permissions.handlePendingPermissionRequest")) {
+        assert.equal(receipt.data.params.result.approvedInteractively, true);
+        assert.deepEqual(receipt.data.params.decisionContext, { source: "human_response", responseCapability: "interactive", surface: "sdk", outcome: "prompted_user" });
+      }
     }
     if (mode === "cleanup-failure") {
       const step = current.stages![0]!.steps[0]!;
@@ -200,6 +257,7 @@ try {
     observations.push({ id: "live-copilot", observed: "Installed authenticated Copilot executes an owned temporary task through the public run and human-control APIs", details: await verifyLiveCopilot(api, await folder(join(temporary, "live-copilot"))) });
   } else {
     const paths = Object.fromEntries(await Promise.all(["claude", "codex", "copilot", "custom", "mxc"].map(async (name) => [name, await executable(name)])));
+    if (!selectedCases.size || selectedCases.has("permission-policy")) await isolated("permission-policy", permissionPolicy);
     if (!selectedCases.size || selectedCases.has("copilot-readiness")) {
     const readinessRoot = await folder(join(temporary, "readiness")); roots.push(readinessRoot);
     const readinessProviders = selectedCases.size ? ["copilot"] as const : providers;
@@ -234,11 +292,12 @@ try {
     for (const provider of providers) {
       const modes: CaseMode[] = provider === "copilot" ? ["approve", "deny", "cancel", "cleanup-failure"] : ["approve", "deny", "cancel"];
       for (const mode of modes) if (!selectedCases.size || selectedCases.has(`${provider}-${mode}`)) await isolated(`${provider}-${mode}`, () => providerJourney(provider, mode, paths[provider]!, paths.mxc!), join(temporary, `${provider}-${mode}`));
+      if (!selectedCases.size || selectedCases.has(`${provider}-autonomous`)) await isolated(`${provider}-autonomous`, () => autonomousJourney(provider, paths[provider]!), join(temporary, `${provider}-autonomous`));
     }
     await isolated("provider-service-stop", () => api.stop());
-    if (!selectedCases.size) {
+    if (!selectedCases.size || selectedCases.has("strands-autonomous")) {
     const strandsRoot = await folder(join(temporary, "strands")); roots.push(strandsRoot);
-    const strands = await verifyNativeStrands(strandsRoot, join(temporary, "strands.sqlite"));
+    const strands = await verifyNativeStrands(strandsRoot, join(temporary, "strands.sqlite"), selectedCases.size ? ["autonomous"] : undefined);
     for (const item of strands) {
       if (item.status === "failed") { caseFailures.push(`strands-${item.mode}: ${item.error}`); process.exitCode = 1; }
       observations.push({ id: `strands-${item.mode}`, status: item.status, observed: item.status === "passed" ? "Real createHarness model-boundary guidance and native controls observed" : item.error!, details: item });

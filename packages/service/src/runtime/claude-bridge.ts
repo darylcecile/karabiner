@@ -125,6 +125,11 @@ export async function executeClaude(request: AdapterRequest): Promise<AgentOutco
 		request.timeoutMs,
 	);
 
+	const scoped = {
+		...request,
+		signal: AbortSignal.any([request.signal, abortController.signal]),
+	};
+
 	const inputs = new InputQueue<SDKUserMessage>();
 	const receipts = new DeliveryReceipts();
 	const sessionId = request.sessionId ?? crypto.randomUUID();
@@ -153,28 +158,33 @@ export async function executeClaude(request: AdapterRequest): Promise<AgentOutco
 			model: request.agent.model || undefined,
 			abortController,
 			permissionPrompts: "host",
-			canUseTool: claudePermissionHandler(request),
+			canUseTool: claudePermissionHandler(scoped),
 			onElicitation: async (input, native) => {
+				const fields = formFields(input.requestedSchema);
+
 				const answer = await interact(
-					request,
+					scoped,
 					{
 						id: input.elicitationId ?? crypto.randomUUID(),
 						provider: "claude",
-						kind: input.title ? "permission" : "question",
+						kind:
+							input.title && input.mode !== "url" && !fields.length
+								? "permission"
+								: "question",
 						prompt: input.title ?? input.message,
 						choices: [
 							{ id: "accept", label: "Accept", effect: "approve" },
 							{ id: "decline", label: "Decline", effect: "deny" },
 							{ id: "cancel", label: "Cancel", effect: "cancel" },
 						],
-						fields: formFields(input.requestedSchema),
+						fields,
 						payload: jsonValue({
 							mode: input.mode,
 							url: input.url,
 							serverName: input.serverName,
 						}),
 					},
-					AbortSignal.any([request.signal, native.signal]),
+					AbortSignal.any([scoped.signal, native.signal]),
 				);
 
 				const action = answer.choice;
