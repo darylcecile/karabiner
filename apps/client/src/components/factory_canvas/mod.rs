@@ -29,11 +29,20 @@ impl Outcome {
     pub const ALL: [Outcome; 3] = [Outcome::Success, Outcome::Failure, Outcome::Return];
 
     /// Graphs read left to right: forward outcomes leave from the right edge, while return
-    /// (back to an earlier node) leaves from the left edge, above the single input.
+    /// (back to an earlier node) leaves from the left edge, above the forward input.
     pub fn side(self) -> Side {
         match self {
             Outcome::Return => Side::Left,
             Outcome::Success | Outcome::Failure => Side::Right,
+        }
+    }
+
+    /// Side of the input an edge of this outcome enters: returns arrive on the right edge,
+    /// above success, so a return to the previous node is a short reverse hop.
+    pub fn input_side(self) -> Side {
+        match self {
+            Outcome::Return => Side::Right,
+            Outcome::Success | Outcome::Failure => Side::Left,
         }
     }
 
@@ -273,8 +282,9 @@ impl Focusable for FactoryCanvas {
 pub(crate) fn node_size(node: &CanvasNode) -> (f32, f32) {
     let badges = if node.badges.is_empty() { 0. } else { style::BADGE_ROW };
     let lines = style::NODE_LINE + node.detail.as_ref().map_or(0., |_| style::DETAIL_LINE) + badges;
-    // Tall enough that stacked outcome handles keep their full hit areas apart.
-    let handles = if node.shown_outcomes().len() > 1 { style::HANDLE_GAP * 2. + style::HANDLE_HIT } else { 0. };
+    // Tall enough that stacked handles (the return input always sits above success) keep
+    // their full hit areas apart.
+    let handles = style::HANDLE_GAP * 2. + style::HANDLE_HIT;
     (style::NODE_W, (lines + style::NODE_PAD * 2.).max(handles))
 }
 
@@ -291,6 +301,18 @@ pub(crate) fn handle_point(node: &CanvasNode, outcome: Option<Outcome>) -> Xy {
         Some(outcome) if outcome.side() == Side::Left => xy(r.x, middle + outcome.slot()),
         Some(outcome) => xy(r.x + r.width, middle + outcome.slot()),
         None => xy(r.x, middle),
+    }
+}
+
+/// Flow position of the input an edge of `outcome` enters: the forward input on the left
+/// border, or the return input on the right border, level with the return source.
+pub(crate) fn input_point(node: &CanvasNode, outcome: Outcome) -> Xy {
+    match outcome.input_side() {
+        Side::Right => {
+            let r = node_rect(node);
+            xy(r.x + r.width, r.y + r.height / 2. + Outcome::Return.slot())
+        }
+        _ => handle_point(node, None),
     }
 }
 
@@ -470,8 +492,8 @@ impl FactoryCanvas {
         let source = self.graph.nodes.iter().find(|n| n.id == edge.source)?;
         let target = self.graph.nodes.iter().find(|n| n.id == edge.target)?;
         let from = self.viewport.to_screen(handle_point(source, Some(edge.outcome)));
-        let to = self.viewport.to_screen(handle_point(target, None));
-        Some(xyflow::bezier(from, edge.outcome.side(), to, Side::Left, self.viewport.zoom))
+        let to = self.viewport.to_screen(input_point(target, edge.outcome));
+        Some(xyflow::bezier(from, edge.outcome.side(), to, edge.outcome.input_side(), self.viewport.zoom))
     }
 
     fn edge_at(&self, local: Xy) -> Option<SharedString> {
@@ -543,6 +565,19 @@ impl FactoryCanvas {
         self.gesture = Gesture::Move { start, pointer: start, origins, moved: false };
     }
 
+    /// Handle hit areas overlap at low zoom, so whichever handle captured the press, start from
+    /// the node's visible port nearest the pointer. An input never starts a connection.
+    fn port_down(&mut self, node: SharedString, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let cursor = self.local(event.position);
+        let Some(found) = self.graph.nodes.iter().find(|n| n.id == node) else { return };
+        let inputs = [Outcome::Success, Outcome::Return].map(|o| (None, input_point(found, o)));
+        let sources = found.shown_outcomes().into_iter().map(|o| (Some(o), handle_point(found, Some(o))));
+        let ports = inputs.into_iter().chain(sources).map(|(port, p)| (port, self.viewport.to_screen(p)));
+        if let Some(Some(outcome)) = xyflow::closest(cursor, f32::INFINITY, ports) {
+            self.handle_down(node, outcome, None, event, window, cx);
+        }
+    }
+
     fn handle_down(&mut self, source: SharedString, outcome: Outcome, reconnect: Option<SharedString>, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         self.interacted = true;
@@ -554,7 +589,13 @@ impl FactoryCanvas {
         cx.notify();
     }
 
-    fn pointer_moved(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+    fn pointer_moved(&mut self, position: Point<Pixels>, pressed: Option<MouseButton>, cx: &mut Context<Self>) {
+        // Every gesture is driven by the left button. A move without it means the release was
+        // missed (e.g. outside the window): finish the gesture before this move can mutate it,
+        // so a committed drag still emits and an unmoved press just ends.
+        if pressed != Some(MouseButton::Left) && !matches!(self.gesture, Gesture::Idle) {
+            self.pointer_released(cx);
+        }
         let local = self.local(position);
         match &mut self.gesture {
             Gesture::Idle => {
@@ -618,15 +659,15 @@ impl FactoryCanvas {
 
     /// Snaps to the closest target handle within `connectionRadius`, else the node under the
     /// pointer (React Flow's "easy connect").
-    fn target_near(&self, cursor: Xy) -> Option<SharedString> {
-        let handles = self.graph.nodes.iter().map(|n| (n, self.viewport.to_screen(handle_point(n, None))));
+    fn target_near(&self, cursor: Xy, outcome: Outcome) -> Option<SharedString> {
+        let handles = self.graph.nodes.iter().map(|n| (n, self.viewport.to_screen(input_point(n, outcome))));
         xyflow::closest(cursor, xyflow::CONNECTION_RADIUS, handles)
             .map(|n| n.id.clone())
             .or_else(|| self.node_at(self.viewport.to_flow(cursor)))
     }
 
     fn finish_connect(&mut self, source: SharedString, outcome: Outcome, reconnect: Option<SharedString>, cursor: Xy, cx: &mut Context<Self>) {
-        let Some(target) = self.target_near(cursor) else { return };
+        let Some(target) = self.target_near(cursor, outcome) else { return };
         if let Some(Err(reason)) = self.check.as_ref().map(|check| check(&source, outcome, &target)) {
             cx.emit(CanvasEvent::ConnectRejected(reason));
             return;

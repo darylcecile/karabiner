@@ -121,6 +121,9 @@ export async function executeCopilot(request: AdapterRequest): Promise<AgentOutc
 	let usage: AgentOutcome["usage"];
 	let error: unknown;
 	let result: AgentOutcome | undefined;
+	const streamingMessages = new Set<string>();
+	const streamingReasoning = new Set<string>();
+	let reportedReasoning = false;
 
 	try {
 		await waitWithSignal(client.start(), signal);
@@ -219,13 +222,54 @@ export async function executeCopilot(request: AdapterRequest): Promise<AgentOutc
 			if (event.type === "user.message" && event.data.clientTurnId)
 				receipts.ack(event.data.clientTurnId, "native-turn");
 
-			if (event.type === "assistant.message_delta")
-				request.emit({ kind: "text", text: event.data.deltaContent });
+			if (event.type === "assistant.message_delta") {
+				streamingMessages.add(event.data.messageId);
+
+				request.emit({
+					kind: "text",
+					text: event.data.deltaContent,
+					messageId: event.data.messageId,
+				});
+			}
+
+			if (event.type === "assistant.reasoning_delta") {
+				streamingReasoning.add(event.data.reasoningId);
+				reportedReasoning = true;
+
+				request.emit({
+					kind: "reasoning",
+					text: event.data.deltaContent,
+					messageId: event.data.reasoningId,
+				});
+			}
+
+			if (event.type === "assistant.reasoning") {
+				if (!streamingReasoning.delete(event.data.reasoningId))
+					request.emit({ kind: "reasoning", text: event.data.content, delta: false });
+
+				reportedReasoning = true;
+			}
+
+			if (event.type === "assistant.message") {
+				if (event.data.reasoningText && !reportedReasoning)
+					request.emit({
+						kind: "reasoning",
+						text: event.data.reasoningText,
+						delta: false,
+					});
+
+				if (!streamingMessages.delete(event.data.messageId))
+					request.emit({ kind: "text", text: event.data.content, delta: false });
+
+				reportedReasoning = false;
+			}
 
 			if (event.type === "tool.execution_start")
 				request.emit({
 					kind: "tool",
 					text: event.data.toolName,
+					name: event.data.toolName,
+					input: event.data.arguments,
 					toolId: event.data.toolCallId,
 					status: "running",
 				});
@@ -236,7 +280,20 @@ export async function executeCopilot(request: AdapterRequest): Promise<AgentOutc
 					text: "Tool completed",
 					toolId: event.data.toolCallId,
 					status: event.data.success ? "completed" : "failed",
+					output: event.data.error
+						? {
+								error: event.data.error.message,
+								result:
+									event.data.result?.detailedContent ??
+									event.data.result?.content,
+							}
+						: (event.data.result?.detailedContent ??
+							event.data.result?.content ??
+							event.data.result?.structuredContent),
 				});
+
+			if (event.type === "session.error")
+				request.emit({ kind: "error", text: event.data.message, delta: false });
 
 			if (event.type === "assistant.usage") {
 				const data = object(event.data);

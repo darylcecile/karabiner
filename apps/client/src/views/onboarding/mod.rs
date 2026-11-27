@@ -82,7 +82,8 @@ impl Templates {
             let settings = api.get::<AppSettings>("/v1/settings").await.ok();
             this.update(cx, |this, cx| {
                 if let (Ok(list), None) = (&templates, &this.selected) {
-                    this.selected = list.first().map(|template| template.id.clone());
+                    // Start from a working workflow; Blank stays one click away.
+                    this.selected = list.iter().find(|template| template.id == "software-delivery").or(list.first()).map(|template| template.id.clone());
                 }
                 match templates {
                     Ok(list) => this.templates = Load::Ready(list),

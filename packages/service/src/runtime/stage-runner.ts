@@ -34,6 +34,7 @@ import {
 import type { InvocationAddress, RunInteractions } from "./interactions.ts";
 import type { RunStore } from "../run-store.ts";
 import { historicalContext } from "./prompt-context.ts";
+import { ActivityRecorder } from "./activity.ts";
 
 export type PlannedStep =
 	| { kind: "agent"; agent: ResolvedAgent }
@@ -141,8 +142,10 @@ export class StageRunner {
 		};
 	}
 	private emitter(stepId: string, attemptId: string) {
-		let output =
-			this.step(stepId).attempts?.find((attempt) => attempt.id === attemptId)?.output ?? "";
+		const initial = this.step(stepId).attempts!.find((attempt) => attempt.id === attemptId)!;
+		const activity = new ActivityRecorder(initial.events);
+		let output = initial.output ?? "";
+		let closed = false;
 
 		let lastWrite = 0;
 
@@ -151,14 +154,20 @@ export class StageRunner {
 				step.output = output;
 				const attempt = step.attempts!.find((attempt) => attempt.id === attemptId)!;
 				attempt.output = output;
+				attempt.events = activity.events;
 			});
 
 		const emit = (event: AdapterEvent) => {
-			output = boundedOutput(
-				output + (event.kind === "text" ? event.text : `\n${event.text}\n`),
-			);
+			if (closed) return;
+			activity.add(event);
+			const progress = event.outputDelta !== undefined;
 
-			if (event.kind === "tool")
+			if (!progress && event.kind !== "reasoning")
+				output = boundedOutput(
+					output + (event.kind === "text" ? event.text : `\n${event.text}\n`),
+				);
+
+			if (!progress && event.kind === "tool" && event.toolId)
 				this.mutate((run) => {
 					const spans = (run.traceSpans ??= []);
 					const id = `${attemptId}:${event.toolId}`;
@@ -166,13 +175,15 @@ export class StageRunner {
 					const existing = spans.find((span) => span.id === id);
 
 					if (existing) {
-						existing.status = event.status ?? "completed";
-						existing.durationMs = offset - existing.startOffsetMs;
-					} else
+						existing.status = event.status ?? existing.status;
+
+						if (existing.status !== "running")
+							existing.durationMs = offset - existing.startOffsetMs;
+					} else if (spans.filter((span) => span.parentId === attemptId).length < 512)
 						spans.push({
 							id,
 							parentId: attemptId,
-							name: event.text,
+							name: event.name ?? event.text,
 							kind: "tool",
 							status: event.status ?? "running",
 							startOffsetMs: offset,
@@ -180,7 +191,7 @@ export class StageRunner {
 						});
 				});
 
-			if (Date.now() - lastWrite > 150 || event.kind === "tool") {
+			if (Date.now() - lastWrite > 150 || (!progress && event.kind === "tool")) {
 				flush();
 				lastWrite = Date.now();
 			}
@@ -188,7 +199,10 @@ export class StageRunner {
 
 		return {
 			emit,
-			flush,
+			close: () => {
+				closed = true;
+				flush();
+			},
 			setOutput: (text: string) => {
 				output = boundedOutput(text);
 			},
@@ -268,7 +282,7 @@ export class StageRunner {
 				),
 			};
 		} finally {
-			events.flush();
+			events.close();
 		}
 	}
 	private async agent(
@@ -454,9 +468,9 @@ export class StageRunner {
 
 			return result;
 		} finally {
+			events.close();
 			lifetime.abort(new Error("Agent invocation ended"));
 			for (const dispose of controls) dispose();
-			events.flush();
 		}
 	}
 	private agentPrompt(run: StoredRun, stepId: string): string {
@@ -637,10 +651,15 @@ export class StageRunner {
 			};
 
 			this.editStep(stepId, (step, run) => {
-				Object.assign(step.attempts!.at(-1)!, {
+				const failed = step.attempts!.find((item) => item.id === attempt.id)!;
+				const activity = new ActivityRecorder(failed.events);
+				activity.add({ kind: "error", text: detail.message, delta: false });
+
+				Object.assign(failed, {
 					status: "failed",
 					finishedAt: timestamp(),
 					error: detail,
+					events: activity.events,
 				});
 
 				step.status = retry ? "pending" : "failed";

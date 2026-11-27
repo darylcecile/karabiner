@@ -38,6 +38,7 @@ export class FixtureApi {
   url = "";
   constructor(readonly binary: string, readonly db: string, readonly home: string, readonly live = false) {}
   async start() {
+    this.url = "";
     await mkdir(this.home, { recursive: true });
     const env = { ...process.env };
     if (!this.live) {

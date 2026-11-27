@@ -1,4 +1,4 @@
-import type { AdapterRequest, AgentOutcome } from "./adapter-types.ts";
+import type { AdapterEvent, AdapterRequest, AgentOutcome } from "./adapter-types.ts";
 import { outcomeSchema, AdapterCleanupError, cleanupFailure } from "./adapter-types.ts";
 import {
 	bridgePrompt,
@@ -13,6 +13,49 @@ import {
 	fieldAnswer,
 } from "./bridge-common.ts";
 import { RpcProcess } from "./rpc-process.ts";
+
+function toolActivity(item: Record<string, unknown>, started: boolean): AdapterEvent | undefined {
+	const status = started
+		? "running"
+		: ["failed", "declined"].includes(String(item.status)) || item.success === false
+			? "failed"
+			: "completed";
+
+	const base: AdapterEvent = {
+		kind: "tool",
+		text: String(item.tool ?? item.type),
+		name: String(item.tool ?? item.type),
+		toolId: String(item.id),
+		status,
+	};
+
+	switch (item.type) {
+		case "commandExecution":
+			return {
+				...base,
+				name: "command",
+				text: String(item.command ?? "command"),
+				input: { command: item.command, cwd: item.cwd },
+				output: item.aggregatedOutput,
+			};
+		case "fileChange":
+			return { ...base, input: item.changes };
+		case "mcpToolCall":
+			return {
+				...base,
+				input: item.arguments,
+				output: item.error
+					? { error: item.error, result: item.result }
+					: (item.result ?? undefined),
+			};
+		case "dynamicToolCall":
+			return { ...base, input: item.arguments, output: item.contentItems };
+		case "webSearch":
+			return { ...base, input: { query: item.query, action: item.action } };
+		default:
+			return undefined;
+	}
+}
 
 async function approval(
 	request: AdapterRequest,
@@ -185,6 +228,8 @@ export async function executeCodex(request: AdapterRequest): Promise<AgentOutcom
 	let finalText = "";
 	let usage: AgentOutcome["usage"];
 	const items = new Map<string, Record<string, unknown>>();
+	const streamedMessages = new Set<string>();
+	const streamedReasoning = new Set<string>();
 	let finish!: (value: AgentOutcome) => void;
 	let fail!: (error: Error) => void;
 
@@ -214,32 +259,75 @@ export async function executeCodex(request: AdapterRequest): Promise<AgentOutcom
 		const turn = object(params.turn);
 		if (method === "turn/started") turnId = String(turn.id);
 
-		if (method === "item/agentMessage/delta")
-			request.emit({ kind: "text", text: String(params.delta ?? "") });
+		if (method === "item/agentMessage/delta") {
+			streamedMessages.add(String(params.itemId));
+
+			request.emit({
+				kind: "text",
+				text: String(params.delta ?? ""),
+				messageId: String(params.itemId),
+			});
+		}
+
+		if (method === "item/reasoning/summaryTextDelta" || method === "item/reasoning/textDelta") {
+			streamedReasoning.add(String(params.itemId));
+
+			request.emit({
+				kind: "reasoning",
+				text: String(params.delta ?? ""),
+				messageId: `${params.itemId}:${method}:${params.summaryIndex ?? params.contentIndex ?? 0}`,
+			});
+		}
+
+		if (method === "item/commandExecution/outputDelta")
+			request.emit({
+				kind: "tool",
+				text: "command",
+				toolId: String(params.itemId),
+				outputDelta: String(params.delta ?? ""),
+			});
+
+		if (method === "error" && typeof object(params.error).message === "string")
+			request.emit({
+				kind: "error",
+				text: String(object(params.error).message),
+				delta: false,
+			});
 
 		const item = object(params.item);
 		if (typeof item.id === "string") items.set(item.id, item);
 
-		if (method === "item/completed" && item.type === "agentMessage")
+		if (method === "item/completed" && item.type === "agentMessage") {
 			finalText = String(item.text ?? "");
+
+			if (!streamedMessages.delete(String(item.id)))
+				request.emit({ kind: "text", text: finalText, delta: false });
+		}
+
+		if (
+			method === "item/completed" &&
+			item.type === "reasoning" &&
+			!streamedReasoning.delete(String(item.id))
+		) {
+			const parts = [
+				...(Array.isArray(item.summary) ? item.summary : []),
+				...(Array.isArray(item.content) ? item.content : []),
+			];
+
+			request.emit({
+				kind: "reasoning",
+				text: parts.filter((part): part is string => typeof part === "string").join("\n\n"),
+				delta: false,
+			});
+		}
 
 		if (
 			(method === "item/started" || method === "item/completed") &&
-			["commandExecution", "fileChange", "mcpToolCall", "webSearch"].includes(
-				String(item.type),
-			)
-		)
-			request.emit({
-				kind: "tool",
-				text: String(item.command ?? item.tool ?? item.type),
-				toolId: String(item.id),
-				status:
-					method === "item/started"
-						? "running"
-						: ["failed", "declined"].includes(String(item.status))
-							? "failed"
-							: "completed",
-			});
+			typeof item.id === "string"
+		) {
+			const event = toolActivity(item, method === "item/started");
+			if (event) request.emit(event);
+		}
 
 		if (method === "thread/tokenUsage/updated") {
 			const total = object(object(params.tokenUsage).last);

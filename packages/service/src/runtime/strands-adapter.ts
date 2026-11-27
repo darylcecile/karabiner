@@ -273,6 +273,8 @@ export async function executeStrands(
 				request.emit({
 					kind: "tool",
 					text: event.toolUse.name,
+					name: event.toolUse.name,
+					input: event.toolUse.input,
 					toolId: event.toolUse.toolUseId,
 					status: "running",
 				});
@@ -283,6 +285,14 @@ export async function executeStrands(
 					text: "Tool finished",
 					toolId: event.result.toolUseId,
 					status: event.result.status === "error" ? "failed" : "completed",
+					output: {
+						content: event.result.content
+							.filter(
+								(block) => block.type === "textBlock" || block.type === "jsonBlock",
+							)
+							.map((block) => block.toJSON()),
+						error: event.result.error?.message,
+					},
 				});
 
 			if (
@@ -291,6 +301,14 @@ export async function executeStrands(
 				event.event.delta.type === "textDelta"
 			)
 				request.emit({ kind: "text", text: event.event.delta.text });
+
+			if (
+				event.type === "modelStreamUpdateEvent" &&
+				event.event.type === "modelContentBlockDeltaEvent" &&
+				event.event.delta.type === "reasoningContentDelta" &&
+				event.event.delta.text
+			)
+				request.emit({ kind: "reasoning", text: event.event.delta.text });
 		}
 
 		request.signal.throwIfAborted();

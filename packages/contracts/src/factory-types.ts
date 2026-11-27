@@ -1,4 +1,4 @@
-import type { AgentDefinition, ExecutionTargetInfo, HarnessInfo, Id, InstructionDefinition, Json, Project, ProjectConfig, Run, SkillDefinition, StageDefinition, Task, TaskStatus, Timestamp } from "./index.ts";
+import type { AgentDefinition, ExecutionTargetInfo, HarnessInfo, Id, InstructionDefinition, Json, Project, ProjectConfig, Run, RunStepStatus, SkillDefinition, StageDefinition, Task, TaskStatus, Timestamp } from "./index.ts";
 
 /** Success/failure select one successor; return selects its explicitly reported target. */
 export type StageOutcome = "success" | "failure" | "return";
@@ -97,6 +97,11 @@ export interface RunInstruction {
   id: Id; message: string; createdAt: Timestamp; deliveredAt: Timestamp | null; stepId: Id | null;
   deliveries?: { stepId: Id; stageInvocationId: Id; attemptId?: Id; deliveredAt: Timestamp; mode: "native-turn" | "native-tool-boundary" | "next-step" }[];
 }
+/** Bounded provider activity, independent of the attempt's final output summary. */
+export interface RunActivityEvent {
+  kind: "message" | "reasoning" | "tool" | "error"; at?: Timestamp; text?: string;
+  toolId?: string; name?: string; input?: string; output?: string; status?: RunStepStatus;
+}
 export interface RunStepAttempt {
   id: Id; number: number; status: "running" | "waiting" | "completed" | "failed" | "cancelled";
   startedAt: Timestamp; finishedAt: Timestamp | null; output?: string;
@@ -104,6 +109,7 @@ export interface RunStepAttempt {
   sessionId?: string;
   denied?: boolean;
   artifacts?: RunArtifact[];
+  events?: RunActivityEvent[];
 }
 export interface RunToken {
   id: Id; scopeId: Id | null; branchId: Id | null; stageId: Id;

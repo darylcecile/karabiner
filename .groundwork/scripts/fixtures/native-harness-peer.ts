@@ -1,6 +1,6 @@
 /** Controlled executable peer for the released SDK wire protocols. Never contacts a provider. */
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -28,7 +28,9 @@ if (provider === "mxc") {
 }
 
 function startPeer() {
-  const autonomous = process.argv[process.argv.indexOf("--fixture-case") + 1] === "autonomous";
+  const fixtureCase = process.argv[process.argv.indexOf("--fixture-case") + 1];
+  const activityRetry = fixtureCase === "activity-retry";
+  const autonomous = fixtureCase === "autonomous" || activityRetry;
   let sessionId = "fixture-session", turnId = "fixture-turn", sequence = 0, aborted = false;
   let runRequest: Frame | undefined, firstUuid = "";
   let guidance: string | undefined;
@@ -46,6 +48,26 @@ function startPeer() {
     const value = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), parentId: null, type, data };
     notification("session.event", { sessionId, event: value });
     return value;
+  };
+  const assistant = (content: Frame[]) => send({ type: "assistant", uuid: crypto.randomUUID(), session_id: sessionId, parent_tool_use_id: null, message: { id: crypto.randomUUID(), type: "message", role: "assistant", model: "fixture", content, stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } });
+  const intro = () => {
+    const text = "Inspecting the owned fixture before making changes.";
+    const reasoning = "The fixture requested a local file operation; inspect its result before reporting completion.";
+    if (provider === "claude") assistant([{ type: "text", text }, { type: "thinking", thinking: reasoning, signature: "fixture-signature" }]);
+    if (provider === "copilot") {
+      event("assistant.message_delta", { messageId: "intro", deltaContent: text.slice(0, 15) });
+      event("assistant.message_delta", { messageId: "intro", deltaContent: text.slice(15) });
+      event("assistant.message", { messageId: "intro", content: text });
+      event("assistant.reasoning_delta", { reasoningId: "reasoning", deltaContent: reasoning });
+      event("assistant.reasoning", { reasoningId: "reasoning", content: reasoning });
+    }
+    if (provider === "codex") {
+      notification("item/agentMessage/delta", { threadId: sessionId, itemId: "intro", delta: text });
+      notification("item/completed", { threadId: sessionId, item: { id: "intro", type: "agentMessage", text } });
+      notification("item/reasoning/summaryTextDelta", { threadId: sessionId, itemId: "reasoning", summaryIndex: 0, delta: reasoning });
+      notification("item/completed", { threadId: sessionId, item: { id: "reasoning", type: "reasoning", summary: [reasoning], content: [] } });
+    }
+    if (provider === "custom") { notification("text", { text }); notification("reasoning", { text: reasoning }); }
   };
   const ask = (method: string, params: Frame): Promise<any> => {
     const id = `native-${++sequence}`;
@@ -83,6 +105,11 @@ function startPeer() {
   const permission = async (kind: "write" | "shell" | "network") => {
     const path = join(process.cwd(), `effect-${kind}.txt`);
     const toolCallId = `tool-${kind}`;
+    const name = kind === "write" ? "Write" : kind === "shell" ? "Bash" : "WebFetch";
+    const input = kind === "write" ? { file_path: path, content: "native effect" } : kind === "shell" ? { command: `printf effect > '${path}'` } : { url: "https://fixture.invalid/resource" };
+    if (provider === "claude") assistant([{ type: "tool_use", id: toolCallId, name, input }]);
+    if (provider === "copilot") event("tool.execution_start", { toolCallId, toolName: name, arguments: input });
+    if (provider === "custom") notification("tool", { id: toolCallId, name: "fixture_tool", input, status: "running" });
     log("permission", { kind, path });
     let response: any;
     if (provider === "claude") response = await ask("can_use_tool", { tool_name: kind === "write" ? "Write" : kind === "shell" ? "Bash" : "WebFetch", tool_use_id: toolCallId, input: kind === "write" ? { file_path: path, content: "native effect" } : kind === "shell" ? { command: `printf effect > '${path}'` } : { url: "https://fixture.invalid/resource" }, blocked_path: kind === "write" ? path : undefined, decision_reason: "Owned fixture operation" });
@@ -95,6 +122,11 @@ function startPeer() {
     log("permission-response", { kind, response });
     const allowed = provider === "claude" ? response?.behavior === "allow" : provider === "codex" ? response?.decision === "accept" : provider === "copilot" ? response?.kind === "approve-once" : response?.choice === "allow";
     if (allowed && !aborted) { writeFileSync(path, "native effect\n"); log("effect", { kind, path }); }
+    const output = allowed ? `Observed ${kind} result: native effect` : `Operator denied ${kind}`;
+    if (provider === "claude") send({ type: "user", uuid: crypto.randomUUID(), session_id: sessionId, parent_tool_use_id: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolCallId, content: output, is_error: !allowed }] } });
+    if (provider === "copilot") event("tool.execution_complete", { toolCallId, success: allowed, ...(allowed ? { result: { content: output } } : { error: { message: output } }) });
+    if (provider === "custom") notification("tool", { id: toolCallId, output, status: allowed ? "completed" : "failed" });
+    if (provider === "codex") notification("item/completed", { threadId: sessionId, item: kind === "write" ? { id: toolCallId, type: "fileChange", changes: [{ path, kind: "add", diff: "+native effect" }], status: allowed ? "completed" : "declined" } : { id: toolCallId, type: "commandExecution", command: "owned fixture command", cwd: process.cwd(), aggregatedOutput: output, status: allowed ? "completed" : "declined" } });
     return allowed;
   };
   const form = async () => {
@@ -117,6 +149,18 @@ function startPeer() {
     log("question-response", response);
   };
   const run = async () => {
+    if (activityRetry) {
+      for (let index = 0; index < 530; index++) notification(index % 2 ? "text" : "reasoning", { text: `Earlier fixture activity ${index}` });
+      notification("tool", { id: "retry-inspect", name: "fixture_tool", input: { path: "README.md" }, status: "running" });
+      notification("tool", { id: "retry-inspect", output: "Large owned fixture result\n".repeat(2_000), status: "completed" });
+    }
+    intro();
+    if (activityRetry && !existsSync(".fixture/retried")) {
+      writeFileSync(".fixture/retried", "first attempt observed\n");
+      notification("error", { text: "Transient fixture failure after inspection" });
+      send({ jsonrpc: "2.0", id: runRequest!.id, error: { code: -32000, message: "Transient fixture failure after inspection" } });
+      return;
+    }
     if (autonomous && provider === "copilot") {
       const path = join(process.cwd(), "README.md");
       const response = await broadcastAsk("permission.requested", { permissionRequest: { kind: "read", toolCallId: "tool-read", path, intention: "Read owned README" } });

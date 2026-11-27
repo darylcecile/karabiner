@@ -72,6 +72,8 @@ pub struct FactoryPane {
     /// Per-workflow pan/zoom for this session (presentation only, never saved).
     viewports: HashMap<String, crate::components::factory_canvas::xyflow::Viewport>,
     pub(super) inspector_open: bool,
+    /// Focus target inside the floating inspector, so its Esc handler is on the key path.
+    pub(super) inspector_focus: FocusHandle,
     targets: Load<Vec<ExecutionTargetInfo>>,
     /// Latest run of the shown workflow, for the canvas overlay and run strip.
     run: Option<Run>,
@@ -124,7 +126,7 @@ impl FactoryPane {
         let mut this = Self {
             seen_version: state.service.read(cx).data_version(),
             state, project_id, config, canvas, workflow: 0, selected: Selected::Workflow, inputs, areas, syncing: false,
-            validation: Validation::Idle, _runtime: None, rejection: None, width: Default::default(), library_open: false, returns: None, groups: HashMap::new(), fit_after_change: false, viewports: HashMap::new(), inspector_open: false, targets: Load::Loading, run: None, _tasks: Vec::new(), _subscriptions: subscriptions,
+            validation: Validation::Idle, _runtime: None, rejection: None, width: Default::default(), library_open: false, returns: None, groups: HashMap::new(), fit_after_change: false, viewports: HashMap::new(), inspector_open: false, inspector_focus: cx.focus_handle(), targets: Load::Loading, run: None, _tasks: Vec::new(), _subscriptions: subscriptions,
         };
         this.config_changed(window, cx);
         this.load_runtime(cx);
@@ -223,8 +225,8 @@ impl FactoryPane {
     }
 
     pub(super) fn select(&mut self, selected: Selected, window: &mut Window, cx: &mut Context<Self>) {
-        // A floating inspector opens for a stage or route, like a detail popover.
-        if selected != Selected::Workflow { self.inspector_open = true }
+        // Selecting never opens the floating inspector (it would cover the canvas); the
+        // toolbar's Inspector or activating a stage (double-click / Enter) does.
         self.selected = selected;
         let selection = match &self.selected {
             Selected::Workflow => Selection::default(),
@@ -256,12 +258,14 @@ impl FactoryPane {
 
     // ---- Graph edits -----------------------------------------------------------------
 
+    /// A new workflow starts with one stage, so it has an entry and a node to select; agents
+    /// stay unassigned rather than guessing which of the project's agents fits.
     pub(super) fn add_workflow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut index = 0;
         self.config.update(cx, |config, cx| config.edit(cx, |config| {
             config.workflows.push(WorkflowDefinition {
                 id: new_id("wf"), name: "New workflow".into(), description: String::new(), instructions: String::new(),
-                stages: Vec::new(), instruction_ids: None, graph: None, layout: None, extra: Default::default(),
+                stages: vec![Self::new_stage("Stage 1".into())], instruction_ids: None, graph: None, layout: None, extra: Default::default(),
             });
             index = config.workflows.len() - 1;
         }));
@@ -360,7 +364,6 @@ impl FactoryPane {
                     _ => Selected::Workflow,
                 };
                 if selected != self.selected {
-                    if selected != Selected::Workflow { self.inspector_open = true }
                     self.selected = selected;
                     self.sync_fields(window, cx);
                     cx.notify()
@@ -397,7 +400,10 @@ impl FactoryPane {
                 (LibraryItem::Fork, _) => self.add_parallel(Some(layout(*position)), window, cx),
                 (LibraryItem::Join, _) => self.add_join(layout(*position), window, cx),
             },
-            CanvasEvent::Activate(id) => self.select(Selected::Stage(id.to_string()), window, cx),
+            CanvasEvent::Activate(id) => {
+                self.select(Selected::Stage(id.to_string()), window, cx);
+                self.open_inspector(window, cx);
+            }
             CanvasEvent::ConnectRejected(reason) => self.reject(reason.clone(), cx),
             CanvasEvent::Copy(selection) => self.copy(selection, cx),
             CanvasEvent::Cut(selection) => self.cut(selection, window, cx),

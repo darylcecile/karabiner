@@ -1233,6 +1233,7 @@ pub struct RunStep {
     #[serde(default)] pub attempts: Vec<RunStepAttempt>,
     /// Set while an automatic retry is scheduled.
     #[serde(default)] pub retry_at: Option<Timestamp>,
+    #[serde(default)] pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -1244,6 +1245,28 @@ pub struct RunStepAttempt {
     pub started_at: Timestamp,
     pub finished_at: Option<Timestamp>,
     #[serde(default)] pub error: Option<RunError>,
+    /// Recorded harness transcript for this attempt (text and tool lines), bounded by the service.
+    #[serde(default)] pub output: Option<String>,
+    #[serde(default)] pub tokens: Option<u64>,
+    #[serde(default)] pub cost: Option<f64>,
+    #[serde(default)] pub session_id: Option<String>,
+    /// Structured harness activity, when the service recorded it (newer runs only).
+    #[serde(default)] pub events: Vec<RunActivityEvent>,
+}
+
+/// One recorded harness event: `message`, `reasoning` (provider-exposed summaries only),
+/// `tool` (keyed by `tool_id`, matching trace span `{attemptId}:{toolId}`) or `error`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunActivityEvent {
+    pub kind: String,
+    #[serde(default)] pub at: Option<Timestamp>,
+    #[serde(default)] pub text: Option<String>,
+    #[serde(default)] pub tool_id: Option<String>,
+    #[serde(default)] pub name: Option<String>,
+    #[serde(default)] pub input: Option<String>,
+    #[serde(default)] pub output: Option<String>,
+    #[serde(default)] pub status: Option<RunStepStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

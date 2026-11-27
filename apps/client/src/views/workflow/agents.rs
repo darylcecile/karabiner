@@ -705,7 +705,7 @@ pub fn environment_dropdown(
     let info = current.as_ref().and_then(|target| targets.ready().and_then(|list| list.iter().find(|info| &info.id == target)).cloned());
     let weak = config.downgrade();
     div().flex().flex_col().gap_1()
-        .child(div().flex().child(components::button_sm(Button::new("env-target").outline().label(label).dropdown_caret(true)).dropdown_menu(move |mut menu, _, _| {
+        .child(components::button_sm(Button::new("env-target").outline().label(label).dropdown_caret(true)).w_full().dropdown_menu(move |mut menu, _, _| {
             for target in ExecutionTarget::ALL.iter() {
                 let (weak, value) = (weak.clone(), target.clone());
                 menu = menu.item(PopupMenuItem::new(ui::target_label(target)).on_click(move |_, _, cx| {
@@ -714,7 +714,7 @@ pub fn environment_dropdown(
                 }));
             }
             menu
-        })))
+        }))
         .children(info.map(|info| div().t_caption().text_color(if info.available { t.text_secondary } else { t.attention })
             .child(if info.available { "Available".to_string() } else if info.message.is_empty() { format!("Not available here. Requires: {}", info.requirements) } else { format!("Not available here. {}", info.message) })))
 }

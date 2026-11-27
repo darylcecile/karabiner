@@ -2,7 +2,7 @@
 //! Edits are a local draft with a base revision; refetches never overwrite a dirty draft.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName,
+    ActiveTheme as _, Disableable as _, Icon, IconName,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     checkbox::Checkbox,
@@ -50,6 +50,10 @@ pub struct TaskDetail {
     runs: Entity<RunsPanel>,
     source: Entity<super::source::SourceLink>,
     pane: Pane,
+    /// Set once the user picks a pane; until then it follows whether the task has a run.
+    pane_chosen: bool,
+    /// Narrow layouts show status and agent inline; the rest open on request.
+    props_open: bool,
     /// Full tab's measured width; below `RAIL_MIN_W` the properties stack above the content.
     body_width: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
     // Draft
@@ -79,6 +83,8 @@ pub struct TaskDetail {
     syncing_inputs: bool,
     // Intervention compose
     compose_kind: InterventionKind,
+    /// The task-note composer opens on demand rather than standing open.
+    compose_open: bool,
     compose: Entity<TextareaState>,
     compose_error: Option<String>,
     sending: bool,
@@ -107,7 +113,7 @@ impl TaskDetail {
     ) -> Self {
         let title = cx.new(|cx| InputState::new(window, cx).placeholder("Task title"));
         let description = cx.new(|cx| {
-            TextareaState::new(window, cx).auto_grow(3, 14).placeholder("Add a description…")
+            TextareaState::new(window, cx).auto_grow(1, 14).placeholder("Add a description…")
         });
         let label_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add label"));
         let compose = cx.new(|cx| {
@@ -206,6 +212,8 @@ impl TaskDetail {
             runs,
             source,
             pane: Pane::Activity,
+            pane_chosen: false,
+            props_open: false,
             body_width: Default::default(),
             title,
             description,
@@ -230,6 +238,7 @@ impl TaskDetail {
             save_error: None,
             syncing_inputs: false,
             compose_kind: InterventionKind::Instruction,
+            compose_open: false,
             compose,
             compose_error: None,
             sending: false,
@@ -314,6 +323,9 @@ impl TaskDetail {
                     self.conflict = task.revision != self.base_revision;
                 } else {
                     self.adopt(&task, cx);
+                }
+                if !self.pane_chosen {
+                    self.pane = if task.latest_run_id.is_some() { Pane::Runs } else { Pane::Activity };
                 }
                 if self.full {
                     self.state.set_title(&TabTarget::task(self.project_id.clone(), self.task_id.clone()), task.title.clone(), cx);
@@ -517,7 +529,7 @@ impl TaskDetail {
 
     fn send_intervention(&mut self, cx: &mut Context<Self>) {
         let message = self.compose.read(cx).value().trim().to_string();
-        if message.is_empty() {
+        if message.is_empty() || self.sending {
             return;
         }
         let body = CreateIntervention {
@@ -537,6 +549,7 @@ impl TaskDetail {
                 match result {
                     Ok(_) => {
                         this.compose.update(cx, |input, cx| input.set_value("", window, cx));
+                        this.compose_open = false;
                         this.state.data_changed(cx);
                     }
                     Err(error) => this.compose_error = Some(ui::error_text(&error)),
@@ -829,6 +842,20 @@ impl TaskDetail {
             .child(Self::property_row("Labels", 100., div().pl(px(VALUE_INSET)).child(p.labels).into_any_element(), cx))
     }
 
+    /// Narrow layouts (drawer, full tab without the rail): status and agent stay editable
+    /// beside a Properties toggle, so the run activity isn't pushed below a metadata wall.
+    fn render_property_disclosure(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let open = self.props_open;
+        let toggle = components::button_sm(Button::new("task-properties-toggle").ghost()
+            .icon(if open { Lucide::ChevronDown } else { Lucide::ChevronRight }).label("Properties").aria_expanded(open))
+            .on_click(cx.listener(|this, _, _, cx| { this.props_open = !this.props_open; cx.notify() }));
+        if open {
+            return div().flex().flex_col().gap_1().child(div().flex().child(toggle)).child(self.render_property_grid(cx)).into_any_element();
+        }
+        let p = self.property_values(cx);
+        div().flex().flex_wrap().items_center().gap_1().child(p.status).child(p.agent).child(toggle).into_any_element()
+    }
+
     /// Full tab: grouped property sidebar (Linear issue view: properties beside the content).
     fn render_property_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = self.property_values(cx);
@@ -859,10 +886,12 @@ impl TaskDetail {
             InterventionKind::Retry, InterventionKind::Cancel,
         ];
         let t = theme::tokens(cx);
+        // A task note is recorded on the task, not delivered to a live agent (that lives on
+        // the run under Runs), so it is a quiet on-demand row, not a standing composer.
         div().flex().flex_col().gap_2()
-            .child(div().flex().items_center().justify_between()
-                .child(section_heading("Intervene", cx))
-                .when(!open.is_empty(), |this| this.child(ui::amber_chip(format!("{} queued", open.len()), cx))))
+            .when(!open.is_empty(), |this| this.child(div().pt_2().flex().items_center().gap_2()
+                .child(section_heading("Task notes", cx))
+                .child(ui::amber_chip(format!("{} queued", open.len()), cx))))
             .children(match &self.interventions {
                 Load::Failed(error) => Some(div().t_label().text_color(cx.theme().danger).child(format!("Couldn't load interventions: {error}"))),
                 _ => None,
@@ -881,12 +910,19 @@ impl TaskDetail {
                             }))))
                     .when(self.responding.as_deref() == Some(item.id.as_str()), |this| this.child(components::input_md(Input::new(&self.response))))
             }))
-            .child(
+            .when(!self.compose_open, |this| this.child(
+                div().flex().child(components::button_sm(Button::new("open-task-note").ghost().compact().icon(Lucide::FileText).label("Add task note"))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.compose_open = true;
+                        this.compose.update(cx, |input, cx| input.focus(window, cx));
+                        cx.notify();
+                    })))))
+            .when(self.compose_open, |this| this.child(
                 // Composer (ref AE10217A comment box): bordered R8 field, actions inside.
                 div().rounded(px(metrics::R_INNER)).border_1().border_color(t.border).bg(t.surface).p_3().flex().flex_col().gap_2()
-                    .child(div().t_label().child(Textarea::new(&self.compose).appearance(false)))
+                    .child(div().t_label().child(Textarea::new(&self.compose).appearance(false).disabled(self.sending)))
                     .child(div().flex().items_center().justify_between()
-                        .child(components::button_sm(Button::new("compose-kind").ghost().compact().icon(intervention_icon(&kind)).label(intervention_label(&kind)).dropdown_caret(true)).dropdown_menu({
+                        .child(components::button_sm(Button::new("compose-kind").ghost().compact().icon(intervention_icon(&kind)).label(intervention_label(&kind)).dropdown_caret(true)).disabled(self.sending).dropdown_menu({
                             move |mut menu, _, _| {
                                 menu = ui::option_menu(menu);
                                 for option in kinds.iter() {
@@ -897,11 +933,19 @@ impl TaskDetail {
                                 menu
                             }
                         }))
-                        .child(components::button_sm(Button::new("send-intervention").primary().label("Record")).loading(self.sending)
-                            .on_click(cx.listener(|this, _, _, cx| this.send_intervention(cx))))),
-            )
-            .child(div().t_caption().text_color(t.text_secondary)
-                .child("Recorded on the task. To guide a running agent, use Add instruction on the run under Runs."))
+                        .child(div().flex().gap_1()
+                            .child(components::button_sm(Button::new("cancel-intervention").ghost().label("Cancel")).disabled(self.sending)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.compose.update(cx, |input, cx| input.set_value("", window, cx));
+                                    this.compose_open = false;
+                                    this.compose_error = None;
+                                    cx.notify();
+                                })))
+                            .child(components::button_sm(Button::new("send-intervention").primary().label("Add note")).loading(self.sending).disabled(self.sending)
+                                .on_click(cx.listener(|this, _, _, cx| this.send_intervention(cx))))))
+                    .child(div().t_caption().text_color(t.text_secondary)
+                        .child("Saved on the task. To guide a running agent, use Add instruction on its run.")),
+            ))
             .children(self.compose_error.clone().map(|error| div().t_label().text_color(cx.theme().danger).child(error)))
     }
 
@@ -910,14 +954,15 @@ impl TaskDetail {
         let total = self.subtasks.len();
         let progress = if total == 0 { 0. } else { done as f32 / total as f32 };
         let t = theme::tokens(cx);
+        // Empty: only the add row, so a task without subtasks costs one line.
         div().flex().flex_col()
-            .child(div().flex().items_center().gap_2().pb_2()
+            .when(total > 0, |this| this.child(div().flex().items_center().gap_2().pb_2()
                 .child(section_heading("Subtasks", cx))
                 .child(div().t_label().font_features(components::typography::tabular()).text_color(t.text_secondary).child(format!("{done} of {total}")))
                 .child(div().ml_auto().w(px(88.)).h(px(4.)).rounded_full().bg(t.border)
-                    .child(div().h_full().w(relative(progress)).rounded_full().bg(t.success))))
+                    .child(div().h_full().w(relative(progress)).rounded_full().bg(t.success)))))
             .children(self.subtasks.iter().enumerate().map(|(index, subtask)| {
-                div().flex().items_center().gap_2().h(px(32.)).px_1().border_b_1().border_color(t.border).t_label()
+                div().flex().items_center().gap_2().h(px(32.)).px_1().t_label()
                     .group(SharedString::from(format!("subtask-{index}")))
                     .child(Checkbox::new(("subtask", index)).checked(subtask.completed)
                         .on_click(cx.listener(move |this, checked: &bool, _, cx| {
@@ -984,7 +1029,7 @@ impl TaskDetail {
         let weak = cx.weak_entity();
         div().flex().flex_col().gap_3()
             .child(div().flex().child(ui::segmented("task-pane", &[(Pane::Activity, "Activity"), (Pane::Runs, "Runs")], pane,
-                move |pane, _, cx| { weak.update(cx, |this, cx| { this.pane = pane; cx.notify(); }).ok(); }, cx)))
+                move |pane, _, cx| { weak.update(cx, |this, cx| { this.pane = pane; this.pane_chosen = true; cx.notify(); }).ok(); }, cx)))
             .child(match pane {
                 Pane::Activity => div().flex().flex_col().gap_3()
                     .child(self.render_activity(cx))
@@ -1005,10 +1050,11 @@ impl TaskDetail {
             .child(div().id("task-detail-scroll").flex_1().min_h_0().overflow_y_scroll()
                 // Content-sized (no shrink), so the scroll extent covers a growing run list.
                 .child(div().flex_none().px_5().py_5().flex().flex_col().gap_6()
-                    .child(self.render_property_grid(cx))
+                    .child(self.render_property_disclosure(cx))
                     .child(self.render_description(true, cx))
-                    .child(self.render_subtasks(cx))
-                    .child(self.render_interventions(cx))
+                    .child(div().flex().flex_col().gap_1()
+                        .child(self.render_subtasks(cx))
+                        .child(self.render_interventions(cx)))
                     .child(self.render_feed(cx))))
     }
 
@@ -1042,11 +1088,12 @@ impl TaskDetail {
                         .child(div().flex().flex_col().gap_3()
                             .children(self.render_read_error(cx))
                             .child(self.render_title(cx))
+                            .when(!rail, |this| this.child(self.render_property_disclosure(cx)))
                             .child(self.render_description(false, cx)))
-                        .when(!rail, |this| this.child(self.render_property_grid(cx)))
-                        .child(self.render_subtasks(cx))
-                        .child(self.render_interventions(cx))
-                        .child(div().pt_6().border_t_1().border_color(t.border).child(self.render_feed(cx)))))
+                        .child(div().flex().flex_col().gap_1()
+                            .child(self.render_subtasks(cx))
+                            .child(self.render_interventions(cx)))
+                        .child(div().pt_2().child(self.render_feed(cx)))))
                 .when(rail, |this| this.child(div().id("task-side-scroll").w(px(SIDEBAR_W)).flex_none().h_full().overflow_y_scroll().border_l_1().border_color(t.border)
                     .child(div().px_4().py_4().child(self.render_property_sidebar(cx))))))
     }

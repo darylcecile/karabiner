@@ -125,6 +125,28 @@ function consume(line: string, capture: Capture, request: AdapterRequest) {
 	if (type === "text" && typeof event.text === "string")
 		request.emit({ kind: "text", text: event.text });
 
+	if (type === "reasoning" && typeof event.text === "string")
+		request.emit({ kind: "reasoning", text: event.text });
+
+	if (type === "tool")
+		request.emit({
+			kind: "tool",
+			text: String(event.name ?? event.text ?? "Tool"),
+			name: typeof event.name === "string" ? event.name : undefined,
+			toolId:
+				typeof (event.toolId ?? event.id) === "string"
+					? String(event.toolId ?? event.id)
+					: undefined,
+			status:
+				event.status === "failed"
+					? "failed"
+					: event.status === "completed"
+						? "completed"
+						: "running",
+			input: event.input,
+			output: event.output,
+		});
+
 	if (type === "assistant.message_delta" && typeof data.deltaContent === "string")
 		request.emit({ kind: "text", text: data.deltaContent });
 
@@ -136,9 +158,18 @@ function consume(line: string, capture: Capture, request: AdapterRequest) {
 		request.emit({
 			kind: "tool",
 			text: String(item.command ?? data.toolName ?? item.tool ?? "Tool execution"),
-			toolId: String(item.id ?? data.toolCallId ?? "tool"),
+			toolId:
+				typeof (item.id ?? data.toolCallId) === "string"
+					? String(item.id ?? data.toolCallId)
+					: undefined,
 			status:
-				type.endsWith("completed") || type.endsWith("complete") ? "completed" : "running",
+				data.success === false || item.status === "failed"
+					? "failed"
+					: type.endsWith("completed") || type.endsWith("complete")
+						? "completed"
+						: "running",
+			input: item.arguments ?? data.arguments ?? item.command,
+			output: item.aggregated_output ?? data.result,
 		});
 	}
 }

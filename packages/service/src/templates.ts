@@ -95,8 +95,7 @@ export const templates: Template[] = [
 	{
 		id: "software-delivery",
 		name: "Software delivery",
-		description:
-			"A configurable plan → implement → review workflow. Execution is not connected.",
+		description: "A plan → implement → review workflow to start from and edit.",
 		config: delivery,
 		documents: [
 			{

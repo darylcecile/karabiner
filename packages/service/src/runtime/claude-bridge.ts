@@ -138,6 +138,8 @@ export async function executeClaude(request: AdapterRequest): Promise<AgentOutco
 	let unregister: (() => void) | undefined;
 	let result: AgentOutcome | undefined;
 	let failure: unknown;
+	const streamingMessages = new Map<string | null, string>();
+	const streamedBlocks = new Set<string>();
 
 	const message = (text: string, uuid: NonNullable<SDKUserMessage["uuid"]>): SDKUserMessage => ({
 		type: "user",
@@ -249,14 +251,54 @@ export async function executeClaude(request: AdapterRequest): Promise<AgentOutco
 					: [])
 				receipts.ack(String(id), "native-turn");
 
+			if (frame.type === "stream_event") {
+				const event = frame.event;
+
+				if (event.type === "message_start")
+					streamingMessages.set(frame.parent_tool_use_id, event.message.id);
+
+				if (event.type === "message_stop")
+					streamingMessages.delete(frame.parent_tool_use_id);
+
+				const streamingMessage = streamingMessages.get(frame.parent_tool_use_id) ?? "";
+
+				if (event.type === "content_block_delta") {
+					const delta = event.delta;
+
+					if (delta.type === "text_delta" || delta.type === "thinking_delta") {
+						const kind = delta.type === "text_delta" ? "text" : "reasoning";
+						streamedBlocks.add(`${streamingMessage}:${kind}`);
+
+						request.emit({
+							kind,
+							text: delta.type === "text_delta" ? delta.text : delta.thinking,
+							messageId: `${streamingMessage}:${event.index}`,
+						});
+					}
+				}
+			}
+
 			if (frame.type === "assistant")
 				for (const block of frame.message.content) {
-					if (block.type === "text") request.emit({ kind: "text", text: block.text });
+					if (block.type === "text" && !streamedBlocks.delete(`${frame.message.id}:text`))
+						request.emit({
+							kind: frame.error ? "error" : "text",
+							text: block.text,
+							delta: false,
+						});
+
+					if (
+						block.type === "thinking" &&
+						!streamedBlocks.delete(`${frame.message.id}:reasoning`)
+					)
+						request.emit({ kind: "reasoning", text: block.thinking, delta: false });
 
 					if (block.type === "tool_use")
 						request.emit({
 							kind: "tool",
 							text: block.name,
+							name: block.name,
+							input: block.input,
 							toolId: block.id,
 							status: "running",
 						});
@@ -270,6 +312,13 @@ export async function executeClaude(request: AdapterRequest): Promise<AgentOutco
 							text: "Tool completed",
 							toolId: block.tool_use_id,
 							status: block.is_error ? "failed" : "completed",
+							output:
+								typeof block.content === "string"
+									? block.content
+									: block.content
+											?.filter((part) => part.type === "text")
+											.map((part) => part.text)
+											.join("\n"),
 						});
 
 			if (frame.type === "result") {

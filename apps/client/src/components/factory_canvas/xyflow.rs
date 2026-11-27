@@ -177,8 +177,8 @@ pub struct Bezier {
 /// `getBezierPath` with React Flow's default curvature 0.25.
 pub fn bezier(from: Xy, from_side: Side, to: Xy, to_side: Side, zoom: f32) -> Bezier {
     const CURVATURE: f32 = 0.25;
-    if from_side == to_side && matches!(from_side, Side::Left | Side::Right) {
-        return same_side_loop(from, from_side, to, zoom);
+    if from_side == Side::Left && to_side == Side::Right && !(0. ..=RETURN_SPAN * zoom).contains(&(from.x - to.x)) {
+        return return_arch(from, to, zoom);
     }
     Bezier {
         from,
@@ -188,18 +188,18 @@ pub fn bezier(from: Xy, from_side: Side, to: Xy, to_side: Side, zoom: f32) -> Be
     }
 }
 
-/// Karabiner addition (not React Flow): `getBezierPath` degenerates when both handles face
-/// the same way (a self-return becomes a flat line along the border, and a return to an
-/// earlier node runs through the nodes between). Each control reaches outward past its own
-/// handle and above the row, so the edge arcs over it and enters from the outside.
-fn same_side_loop(from: Xy, side: Side, to: Xy, zoom: f32) -> Bezier {
-    // Flow-space sizes, scaled like the nodes so the loop never reaches a neighbour column.
-    let (reach, lift) = (40. * zoom, 48. * zoom);
-    let out = if side == Side::Left { -reach } else { reach };
-    // A self-return (handles stacked on one border) would collapse to a spike; swing out
-    // around them instead so the loop stays visibly outside the node.
-    let drop = if (from.x - to.x).abs() < reach { lift } else { -lift };
-    Bezier { from, c1: xy(from.x + out, from.y - lift), c2: xy(to.x + out, to.y + drop), to }
+/// Widest flow-space gap a return (source left border → target right border) crosses directly.
+/// Narrower than a node, so nothing can sit in between.
+const RETURN_SPAN: f32 = 150.;
+
+/// Karabiner addition (not React Flow): a return to the adjacent node is a plain short
+/// Bézier, but a self-return or one that skips a node would cut through a node body. Each
+/// control reaches outward past its own handle and above the row, so the edge arcs over
+/// and enters the target's right-hand input from outside.
+fn return_arch(from: Xy, to: Xy, zoom: f32) -> Bezier {
+    // Flow-space sizes, scaled like the nodes; the peak (¾ of the lift) clears the node tops.
+    let (reach, lift) = (40. * zoom, 64. * zoom);
+    Bezier { from, c1: xy(from.x - reach, from.y - lift), c2: xy(to.x + reach, to.y - lift), to }
 }
 
 impl Bezier {

@@ -14,7 +14,7 @@ type Provider = "claude" | "codex" | "copilot" | "custom";
 type CaseMode = "approve" | "deny" | "cancel" | "cleanup-failure";
 const providers = ["claude", "codex", "copilot", "custom"] as const;
 const selectedCases = new Set<string>();
-const knownCases = new Set([...providers.flatMap((provider) => ["approve", "deny", "cancel", "autonomous"].map((mode) => `${provider}-${mode}`)), "copilot-cleanup-failure", "copilot-readiness", "permission-policy", "strands-autonomous"]);
+const knownCases = new Set([...providers.flatMap((provider) => ["approve", "deny", "cancel", "autonomous"].map((mode) => `${provider}-${mode}`)), "copilot-cleanup-failure", "copilot-readiness", "permission-policy", "strands-autonomous", "custom-activity"]);
 for (let index = 2; index < process.argv.length; index++) if (process.argv[index] === "--case") {
   const name = process.argv[++index];
   if (!name || !knownCases.has(name)) throw new Error(`Unknown or missing --case: ${name ?? ""}`);
@@ -160,6 +160,49 @@ async function autonomousJourney(provider: Provider, path: string) {
   observations.push({ id, observed: `${provider} autonomous mode completes actual owned effects through its native permission channel with no human answers`, details: { run: current, log } });
 }
 
+function recordedActivity(run: StoredRun, provider: Provider) {
+  const attempt = run.stages![0]!.steps[0]!.attempts!.at(-1)!;
+  const events = attempt.events!;
+  assert.ok(events?.length, "Provider activity survives the final outcome summary");
+  assert.equal(events.filter((event) => event.kind === "message" && event.text === "Inspecting the owned fixture before making changes.").length, 1, "Streamed and complete messages are retained once");
+  assert.equal(events.filter((event) => event.kind === "reasoning" && event.text?.startsWith("The fixture requested")).length, 1);
+  for (const kind of ["write", "shell", "network"]) {
+    const tools = events.filter((event) => event.kind === "tool" && event.toolId === `tool-${kind}`);
+    assert.equal(tools.length, 1, "Start/result correlate by exact tool ID");
+    const tool = tools[0]!;
+    assert.equal(tool.status, "completed");
+    assert.ok(tool.input);
+    if (provider !== "codex" || kind !== "write") assert.match(tool.output!, new RegExp(`Observed ${kind} result`));
+    assert.ok(run.traceSpans?.some((span) => span.id === `${attempt.id}:${tool.toolId}` && span.parentId === attempt.id));
+  }
+}
+
+async function activityJourney(path: string) {
+  const directory = await folder(join(temporary, "custom-activity")); roots.push(directory);
+  const agent: AgentDefinition = { id: "activity", name: "Recorded activity", role: "developer", harness: "custom", protocol: "jsonrpc-v2", model: "fixture-local", executable: path, args: ["--fixture-case", "activity-retry"], mode: "autonomous", skillIds: [], instructions: "Use controlled activity fixture." };
+  const { task } = await api.project(directory, agent);
+  const started = await api.call<StoredRun>(`/v1/tasks/${task.id}/run`, "POST", {});
+  caseRuns.set("custom-activity", started.id);
+  const current = await waitFor("activity retry completion", () => api.run(started.id), (run) => ["completed", "failed"].includes(run.state));
+  assert.equal(current.state, "completed");
+  const attempts = current.stages![0]!.steps[0]!.attempts!;
+  assert.deepEqual(attempts.map((attempt) => attempt.status), ["failed", "completed"]);
+  assert.notEqual(attempts[0]!.id, attempts[1]!.id);
+  for (const attempt of attempts) {
+    assert.equal(attempt.events![0]!.text, "[Earlier activity truncated]");
+    assert.ok(attempt.events!.length <= 512 && JSON.stringify(attempt.events).length < 257_000);
+    assert.match(attempt.events!.find((event) => event.toolId === "retry-inspect")!.output!, /\[Content truncated\]$/);
+    assert.ok(current.traceSpans?.some((span) => span.id === `${attempt.id}:retry-inspect`));
+  }
+  assert.ok(attempts[0]!.events!.some((event) => event.kind === "error" && event.text?.includes("Transient fixture failure")));
+  recordedActivity(current, "custom");
+  assert.equal(attempts[1]!.output, current.output);
+  await api.stop(); await api.start();
+  const reloaded = await api.run(current.id);
+  assert.deepEqual(reloaded.stages![0]!.steps[0]!.attempts, attempts, "Fresh service reads durable activity and final summaries");
+  observations.push({ id: "custom-activity", observed: "Bounded activity, exact tool results, errors and independent retry attempts survive final summaries and an owned service reload", details: { run: reloaded } });
+}
+
 async function providerJourney(provider: Provider, mode: CaseMode, path: string, mxc: string) {
   const effectsComplete = mode === "approve" || mode === "cleanup-failure";
   const directory = await folder(join(temporary, `${provider}-${mode}`)); roots.push(directory);
@@ -199,6 +242,7 @@ async function providerJourney(provider: Provider, mode: CaseMode, path: string,
   const log = await waitFor("native process cleanup", () => wireLog(directory), (rows) => rows.filter((row) => row.event === "started").every((row) => !alive(row.pid)));
   assert.equal(current.stages![0]!.steps[0]!.attempts!.length, 1, "Completed effects and operator decisions never trigger automatic replay");
   if (effectsComplete) {
+    recordedActivity(current, provider);
     for (const kind of ["write", "shell", "network"]) assert.equal(await readFile(join(directory, `effect-${kind}.txt`), "utf8"), "native effect\n");
     assert.ok(current.instructions?.some((instruction) => instruction.deliveries?.some((delivery) => delivery.mode === "native-turn" && delivery.attemptId === first.attemptId)));
     assert.ok(log.some((row) => row.event === "form-response" && row.data.count === 3 && row.data.enabled === false && Array.isArray(row.data.tags)));
@@ -294,6 +338,7 @@ try {
       for (const mode of modes) if (!selectedCases.size || selectedCases.has(`${provider}-${mode}`)) await isolated(`${provider}-${mode}`, () => providerJourney(provider, mode, paths[provider]!, paths.mxc!), join(temporary, `${provider}-${mode}`));
       if (!selectedCases.size || selectedCases.has(`${provider}-autonomous`)) await isolated(`${provider}-autonomous`, () => autonomousJourney(provider, paths[provider]!), join(temporary, `${provider}-autonomous`));
     }
+    if (!selectedCases.size || selectedCases.has("custom-activity")) await isolated("custom-activity", () => activityJourney(paths.custom!), join(temporary, "custom-activity"));
     await isolated("provider-service-stop", () => api.stop());
     if (!selectedCases.size || selectedCases.has("strands-autonomous")) {
     const strandsRoot = await folder(join(temporary, "strands")); roots.push(strandsRoot);

@@ -10,7 +10,7 @@ use gpui_kit::{
 };
 
 use super::{
-    CanvasEdge, CanvasNode, FactoryCanvas, Gesture, LibraryDrag, NodeKind, Outcome, handle_point, node_rect, node_size,
+    CanvasEdge, CanvasNode, FactoryCanvas, Gesture, LibraryDrag, NodeKind, Outcome, handle_point, input_point, node_rect, node_size,
     style::{self, FlowTheme},
     xyflow::{self, Bezier, Rect, Side, Viewport, Xy, xy},
 };
@@ -20,6 +20,13 @@ fn pt(p: Xy) -> Point<Pixels> {
 }
 
 type ControlAction = fn(&mut FactoryCanvas, &mut Context<FactoryCanvas>);
+
+/// A node handle: the input an outcome's edges enter, or an outcome's source handle.
+#[derive(Clone, Copy)]
+enum Port {
+    Input(Outcome),
+    Source(Outcome),
+}
 
 struct EdgePaint {
     curve: Bezier,
@@ -53,7 +60,6 @@ impl Render for FactoryCanvas {
         let entity = cx.entity().downgrade();
         let resized = entity.clone();
         let bounds_cell = self.bounds.clone();
-        let tracking = !matches!(self.gesture, Gesture::Idle);
 
         let surface = canvas(
             |_, _, _| {},
@@ -69,7 +75,7 @@ impl Render for FactoryCanvas {
                     });
                 }
                 paint_scene(&scene, bounds, window);
-                listen_pointer(entity, tracking, window);
+                listen_pointer(entity, window);
             },
         )
         .absolute()
@@ -149,39 +155,35 @@ impl FactoryCanvas {
     }
 
     /// React Flow's connection line: a default Bézier from the source handle to the pointer,
-    /// or to the snapped target handle.
+    /// or to the input the connection would land on (the same resolver the drop uses).
     fn connection_line(&self, source: &SharedString, outcome: Outcome, cursor: Xy) -> Option<Bezier> {
         let node = self.graph.nodes.iter().find(|n| &n.id == source)?;
         let from = self.viewport.to_screen(handle_point(node, Some(outcome)));
-        let snapped = self.snapped_target(cursor);
+        let snapped = self.target_near(cursor, outcome).and_then(|id| self.graph.nodes.iter().find(|n| n.id == id));
         let (to, side) = match snapped {
-            Some(target) => (self.viewport.to_screen(handle_point(target, None)), Side::Left),
+            Some(target) => (self.viewport.to_screen(input_point(target, outcome)), outcome.input_side()),
             None => (cursor, opposite(outcome.side())),
         };
         Some(xyflow::bezier(from, outcome.side(), to, side, self.viewport.zoom))
     }
 
     /// Connection line while dragging an edge's source end: pointer (or snapped source
-    /// handle) to the fixed target handle.
+    /// handle) to the target input that outcome enters.
     fn source_line(&self, outcome: Outcome, target: &SharedString, cursor: Xy) -> Option<Bezier> {
         let node = self.graph.nodes.iter().find(|n| &n.id == target)?;
-        let to = self.viewport.to_screen(handle_point(node, None));
         let snapped = self.source_near(cursor, outcome).and_then(|(id, outcome)| {
             let source = self.graph.nodes.iter().find(|n| n.id == id)?;
-            Some((self.viewport.to_screen(handle_point(source, Some(outcome))), outcome.side()))
+            Some((self.viewport.to_screen(handle_point(source, Some(outcome))), outcome))
         });
-        let (from, side) = snapped.unwrap_or((cursor, outcome.side()));
-        Some(xyflow::bezier(from, side, to, Side::Left, self.viewport.zoom))
+        let (from, outcome) = snapped.unwrap_or((cursor, outcome));
+        let to = self.viewport.to_screen(input_point(node, outcome));
+        Some(xyflow::bezier(from, outcome.side(), to, outcome.input_side(), self.viewport.zoom))
     }
 
-    fn snapped_target(&self, cursor: Xy) -> Option<&CanvasNode> {
-        let handles = self.graph.nodes.iter().map(|n| (n, self.viewport.to_screen(handle_point(n, None))));
-        xyflow::closest(cursor, xyflow::CONNECTION_RADIUS, handles)
-    }
-
-    fn connecting_to(&self) -> Option<SharedString> {
+    /// Node and input side the current connection would land on.
+    fn connecting_to(&self) -> Option<(SharedString, Side)> {
         match &self.gesture {
-            Gesture::Connect { cursor, .. } => self.target_near(*cursor),
+            Gesture::Connect { cursor, outcome, .. } => self.target_near(*cursor, *outcome).map(|id| (id, outcome.input_side())),
             _ => None,
         }
     }
@@ -264,25 +266,38 @@ impl FactoryCanvas {
                 )
             })
             .when(!node.badges.is_empty(), |el| el.child(badges(node, z, cx)));
-        let target_active = self.connecting_to().as_ref() == Some(&node.id);
-        let handles = std::iter::once(self.handle(node, None, target_active, theme, cx))
-            .chain(node.shown_outcomes().into_iter().map(|outcome| self.handle(node, Some(outcome), false, theme, cx)));
+        let target = self.connecting_to();
+        let inputs = [Outcome::Success, Outcome::Return].map(|outcome| {
+            let active = target.as_ref().is_some_and(|(id, side)| id == &node.id && *side == outcome.input_side());
+            (Port::Input(outcome), active)
+        });
+        let sources = node.shown_outcomes().into_iter().map(|outcome| (Port::Source(outcome), false));
+        let handles: Vec<_> = inputs.into_iter().chain(sources).map(|(port, active)| self.handle(node, port, active, theme, cx)).collect();
         div().child(body).children(handles)
     }
 
     /// 6px React Flow handle with a 14px hit area. Source handles start connections.
-    fn handle(&self, node: &CanvasNode, outcome: Option<Outcome>, active: bool, theme: FlowTheme, cx: &mut Context<Self>) -> AnyElement {
+    fn handle(&self, node: &CanvasNode, port: Port, active: bool, theme: FlowTheme, cx: &mut Context<Self>) -> AnyElement {
         let z = self.viewport.zoom;
-        let at = self.viewport.to_screen(handle_point(node, outcome));
+        let (point, outcome, name) = match port {
+            Port::Input(Outcome::Return) => (input_point(node, Outcome::Return), None, "return-target"),
+            Port::Input(outcome) => (input_point(node, outcome), None, "target"),
+            Port::Source(outcome) => (handle_point(node, Some(outcome)), Some(outcome), outcome.label()),
+        };
+        let at = self.viewport.to_screen(point);
         let dot = (style::HANDLE * z).max(5.);
         let hit = dot.max(style::HANDLE_HIT);
         let border = if active { theme.edge_hover } else { theme.handle_border };
-        let key = format!("handle-{}-{}", node.id, outcome.map_or("target", Outcome::label));
+        let key = format!("handle-{}-{}", node.id, name);
         // Per-handle group: hovering one handle must not light up another.
         let group = SharedString::from(key.clone());
         let source = node.id.clone();
+        // Press areas stay 14pt and may overlap at low zoom (the press resolves to the nearest
+        // port), but the hint only covers this port's own share of the gap, so hovering a
+        // neighbouring port never shows this one's outcome.
+        let tip = hit.min(style::HANDLE_GAP * z);
         div()
-            .id(SharedString::from(key))
+            .id(SharedString::from(key.clone()))
             .absolute()
             .left(px(at.x - hit / 2.))
             .top(px(at.y - hit / 2.))
@@ -291,25 +306,32 @@ impl FactoryCanvas {
             .items_center()
             .justify_center()
             .cursor(CursorStyle::Crosshair)
-            .when_some(outcome, |el, outcome| el.tooltip(move |window, cx| Tooltip::new(handle_hint(outcome)).build(window, cx)))
             .group(group.clone())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     cx.stop_propagation();
-                    if let Some(outcome) = outcome {
-                        this.handle_down(source.clone(), outcome, None, event, window, cx);
-                    }
+                    this.port_down(source.clone(), event, window, cx);
                 }),
             )
             .child(
                 div()
-                    .size(px(dot))
-                    .rounded_full()
-                    .bg(theme.handle_bg)
-                    .border_1()
-                    .border_color(border)
-                    .group_hover(group, move |s| s.border_color(theme.edge_hover)),
+                    .id(SharedString::from(format!("{key}-tip")))
+                    .size(px(tip))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when_some(outcome, |el, outcome| el.tooltip(move |window, cx| Tooltip::new(handle_hint(outcome)).build(window, cx)))
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(dot))
+                            .rounded_full()
+                            .bg(theme.handle_bg)
+                            .border_1()
+                            .border_color(border)
+                            .group_hover(group, move |s| s.border_color(theme.edge_hover)),
+                    ),
             )
             .into_any_element()
     }
@@ -538,21 +560,21 @@ fn node_shadow() -> Vec<BoxShadow> {
 }
 
 /// Moves and releases are tracked window-wide while a gesture is active, so drags that leave
-/// the canvas still finish. Idle moves only update edge hover.
-fn listen_pointer(entity: WeakEntity<FactoryCanvas>, tracking: bool, window: &mut Window) {
+/// the canvas still finish. Idle moves only update edge hover. The release listener is always
+/// installed and reads the live gesture, because a fast click can press and release before
+/// the frame that would have seen the gesture start.
+fn listen_pointer(entity: WeakEntity<FactoryCanvas>, window: &mut Window) {
     let moves = entity.clone();
     window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
         if phase == DispatchPhase::Bubble {
-            moves.update(cx, |this, cx| this.pointer_moved(event.position, cx)).ok();
+            moves.update(cx, |this, cx| this.pointer_moved(event.position, event.pressed_button, cx)).ok();
         }
     });
-    if tracking {
-        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
-                entity.update(cx, |this, cx| this.pointer_released(cx)).ok();
-            }
-        });
-    }
+    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+        if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+            entity.update(cx, |this, cx| this.pointer_released(cx)).ok();
+        }
+    });
 }
 
 fn paint_scene(scene: &Scene, bounds: Bounds<Pixels>, window: &mut Window) {

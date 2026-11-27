@@ -17,6 +17,10 @@
 
 ## Evidence and limits
 
+### Recorded activity
+
+New attempts keep bounded `events` alongside their final output summary; tool details correlate by raw provider tool ID and attempt-prefixed trace ID. See [recorded agent activity](../decisions/recorded-agent-activity.md) for retention limits and provider fields. `factory-harnesses` approve/cleanup cases assert actual message, exposed reasoning and tool arguments/results. Its `--case custom-activity` case additionally exercises automatic retry, truncation and an owned service restart, asserting both attempt histories and final summaries after SQLite reload. `--case strands-autonomous` checks the installed SDK's text/reasoning and real file-tool results. Existing records without events use their stored output fallback; missing reasoning/tool output must stay visibly unavailable.
+
 Run after the implementation batch is coherent with the selected checks and saved plan in one coordinated Groundwork invocation. The check writes `factory-runtime.json` and structured `result.json` to `GROUNDWORK_EVIDENCE_DIR`; retain the invocation's own external run ID. Inspect scenario outcomes, process call journals, run snapshots, exact mutation receipts and actual diff/tool results before claiming a pass.
 
 Groundwork selects checks in merged catalogue order and executes them sequentially; command-line name order does not reorder them. `t-factory-runtime.json` and `u-factory-integrations.json` follow the existing client/service checks. Register the native `factory-builder` fragment last. Its script consumes the already-built `target/debug/karabiner` and reports a missing binary rather than building or replacing the user's app itself.

@@ -22,7 +22,7 @@ use super::ui::{self, Load};
 
 use crate::{api::query_value, state::{AppState, TabTarget}};
 use crate::components::{self, Step, StepAnswer, StepState, Typography as _, step_glyph};
-use crate::theme::{self as theme_tokens, metrics};
+use crate::theme as theme_tokens;
 
 /// One configured workflow stage with its assigned agents `(name, harness)`.
 #[derive(Clone, PartialEq)]
@@ -372,9 +372,7 @@ impl RunsPanel {
                     cx.notify();
                 }))
         });
-        div().flex().items_center().gap_1()
-            .when(interrupted && state == RunState::Paused, |this| this.child(div().t_caption().text_color(cx.theme().muted_foreground)
-                .child("Interrupted mid-step; check its effects, then retry or cancel.")))
+        div().flex_none().ml_auto().flex().flex_wrap().items_center().gap_1()
             .children(instruct)
             .children(actions.iter().map(|(action, label)| {
             let run = run.clone();
@@ -393,28 +391,39 @@ impl RunsPanel {
                 RunStepStatus::Completed | RunStepStatus::Failed | RunStepStatus::Skipped | RunStepStatus::Cancelled)).count(),
         );
         let on_rail: Vec<String> = steps.iter().filter_map(|(_, question)| question.clone()).collect();
+        // A recorded trace is the one stage → agent hierarchy (with its activity); the step
+        // rail is the fallback for runs without one. Without the rail, approvals answer on
+        // their full question cards, so none are treated as rail-exposed.
+        let traced = run.trace_spans.as_ref().is_some_and(|spans| !spans.is_empty());
+        let on_rail = if traced { Vec::new() } else { on_rail };
         // A failed run leads with its errors. Otherwise errors were handled (e.g. a failed
         // check rerouted to repair): step errors already show on their step lines, and
         // run-level ones stay as muted history.
         let failed = run.run_state() == RunState::Failed;
         let errors: Vec<String> = run.errors.iter().filter(|error| failed || error.step_id.is_none()).map(|error| error.message.clone()).collect();
         let trigger = run.trigger.as_deref().filter(|trigger| *trigger != "manual").map(|trigger| ui::chip(trigger.to_string(), cx));
-        div().flex().flex_col().rounded(px(metrics::R_CARD)).border_1().border_color(cx.theme().border).bg(theme_tokens::tokens(cx).surface).p_4().gap_1()
-            .child(div().flex().items_center().gap_2().mb_1()
-                .child(div().t_label().font_weight(FontWeight::MEDIUM).child(format!("Run {}", ui::short_date(&run.created_at))))
-                .child(ui::chip(if run.pause_requested && run.is_active() { "pausing".to_string() } else { run.state.clone() }, cx))
-                .children(trigger)
-                .child(div().ml_auto().t_caption().text_color(cx.theme().muted_foreground).child(format!("{done}/{count}")))
+        let interrupted = run.run_state() == RunState::Paused && run.errors.iter().any(|error| error.code == "interrupted");
+        // One borderless section: identity and status on the left, actions wrapping to their
+        // own line when the column is narrow.
+        div().flex().flex_col().gap_1()
+            .child(div().flex().flex_wrap().items_center().gap_x_3().gap_y_1().mb_1()
+                .child(div().flex_1().min_w(px(180.)).flex().items_center().gap_2()
+                    .child(div().t_label().font_weight(FontWeight::MEDIUM).child(format!("Run {}", ui::short_date(&run.created_at))))
+                    .child(ui::chip(if run.pause_requested && run.is_active() { "pausing".to_string() } else { run.state.clone() }, cx))
+                    .children(trigger)
+                    .child(div().t_caption().text_color(cx.theme().muted_foreground).child(format!("{done}/{count} stages"))))
                 .child(self.render_controls(run, cx)))
+            .when(interrupted, |this| this.child(div().t_caption().text_color(cx.theme().muted_foreground)
+                .child("Interrupted mid-step; check its effects, then retry or cancel.")))
             .child(self.render_questions(run, &on_rail, cx))
             .child(self.render_instructions(run, cx))
             .child(self.render_artifacts(run, cx))
             .children(errors.into_iter().map(|error| div().t_label()
                 .text_color(if failed { cx.theme().danger } else { cx.theme().muted_foreground })
                 .child(if failed { error } else { format!("Handled earlier: {error}") })))
-            .when(steps.is_empty(), |this| this.child(div().t_label().text_color(cx.theme().muted_foreground).child("No step data recorded for this run.")))
-            .children(steps.into_iter().enumerate().map(|(index, (step, question))| self.render_step(&run.id, question, index, index + 1 == count, step, window, cx)))
-            .children(self.traces.get(&run.id).cloned().map(|view| div().mt_2().child(view)))
+            .when(steps.is_empty() && !traced, |this| this.child(div().t_label().text_color(cx.theme().muted_foreground).child("No step data recorded for this run.")))
+            .when(!traced, |this| this.children(steps.into_iter().enumerate().map(|(index, (step, question))| self.render_step(&run.id, question, index, index + 1 == count, step, window, cx))))
+            .when(traced, |this| this.children(self.traces.get(&run.id).cloned().map(|view| div().mt_2().child(view))))
     }
 
     fn render_step(&self, run_id: &str, question: Option<String>, index: usize, last: bool, step: Step, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -457,7 +466,10 @@ impl Render for RunsPanel {
             Load::Ready(runs) if runs.is_empty() => self.render_empty(cx).into_any_element(),
             Load::Ready(runs) => {
                 let runs = runs.clone();
-                div().flex().flex_col().gap_2().children(runs.iter().map(|run| self.render_run(run, window, cx))).into_any_element()
+                let t = theme_tokens::tokens(cx);
+                div().flex().flex_col().gap_4().children(runs.iter().enumerate().map(|(index, run)| div()
+                    .when(index > 0, |this| this.pt_4().border_t_1().border_color(t.border))
+                    .child(self.render_run(run, window, cx)))).into_any_element()
             }
         }
     }

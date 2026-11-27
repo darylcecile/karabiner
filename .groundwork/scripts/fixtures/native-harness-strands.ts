@@ -45,6 +45,12 @@ class BoundaryModel extends Model {
     assert.ok(options?.toolSpecs?.some((tool) => tool.name === name));
     this.calls.push({ tool: name, messages: messages.map((message) => message.toJSON()) });
     yield { type: "modelMessageStartEvent", role: "assistant" };
+    if (index === 0) {
+      yield { type: "modelContentBlockDeltaEvent", delta: { type: "textDelta", text: "Inspecting the owned Strands fixture." } };
+      yield { type: "modelContentBlockStopEvent" };
+      yield { type: "modelContentBlockDeltaEvent", delta: { type: "reasoningContentDelta", text: "Check the actual tool result before reporting completion." } };
+      yield { type: "modelContentBlockStopEvent" };
+    }
     yield { type: "modelContentBlockStartEvent", start: { type: "toolUseStart", toolUseId: `boundary-${index}`, name } };
     yield { type: "modelContentBlockDeltaEvent", delta: { type: "toolUseInputDelta", input: JSON.stringify(input) } };
     yield { type: "modelContentBlockStopEvent" };
@@ -108,6 +114,11 @@ export async function verifyNativeStrands(root: string, database: string, modes:
           assert.equal(current.tokens, model.calls.length * 7);
           assert.equal(current.cost, null);
           assert.ok(sessionKeys.length, "Actual SDK session snapshots persist in service-owned SQLite");
+          const events = current.stages![0]!.steps[0]!.attempts![0]!.events!;
+          assert.ok(events.some((event) => event.kind === "message" && event.text === "Inspecting the owned Strands fixture."));
+          assert.ok(events.some((event) => event.kind === "reasoning" && event.text === "Check the actual tool result before reporting completion."));
+          assert.match(events.find((event) => event.toolId === "boundary-2")!.output!, /actual Strands file tool/);
+          assert.match(events.find((event) => event.toolId === "boundary-0")!.input!, /strands-effect.txt/);
           for (const name of ["write", "shell", "read"]) assert.ok(current.traceSpans?.some((span) => span.kind === "tool" && span.name === name), `${name} has an observed tool span`);
         } else assert.equal(await Bun.file(join(directory, "strands-effect.txt")).exists(), false);
       } catch (caught) { error = caught; }

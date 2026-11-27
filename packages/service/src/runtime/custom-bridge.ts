@@ -91,11 +91,17 @@ export async function executeCustomBridge(request: AdapterRequest): Promise<Agen
 		if (method === "text" && typeof params.text === "string")
 			request.emit({ kind: "text", text: params.text });
 
+		if ((method === "reasoning" || method === "error") && typeof params.text === "string")
+			request.emit({ kind: method, text: params.text });
+
 		if (method === "tool")
 			request.emit({
 				kind: "tool",
 				text: String(params.name ?? "Tool"),
-				toolId: String(params.id),
+				name: typeof params.name === "string" ? params.name : undefined,
+				toolId: typeof params.id === "string" ? params.id : undefined,
+				input: params.input,
+				output: params.output,
 				status:
 					params.status === "completed"
 						? "completed"

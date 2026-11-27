@@ -73,9 +73,17 @@ export class AdapterCleanupError extends Error {
 }
 
 export interface AdapterEvent {
-	kind: "text" | "tool" | "activity";
+	kind: "text" | "reasoning" | "tool" | "activity" | "error";
 	text: string;
 	toolId?: string;
+	name?: string;
+	input?: unknown;
+	output?: unknown;
+	outputDelta?: string;
+	/** Provider block identity for coalescing interleaved streams; not a tool identity. */
+	messageId?: string;
+	/** Stream deltas append; complete messages establish a new message boundary. */
+	delta?: boolean;
 	status?: "running" | "completed" | "failed";
 }
 
